@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/capability/v1",
+  "identifier": "default",
+  "description": "Default capability for the main window. Grants access to dialog and fs plugins needed for save/load simulation state.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "fs:allow-write-text-file",
+    "fs:allow-read-text-file",
+    "fs:allow-app-write",
+    "fs:allow-app-read",
+    "fs:allow-app-write-recursive"
+  ]
+}

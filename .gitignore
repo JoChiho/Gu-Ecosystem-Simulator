@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/*.exe
+src-tauri/*.msi
+src-tauri/*.dmg
+src-tauri/*.app
+src-tauri/*.appimage
+src-tauri/*.deb
+src-tauri/*.rpm
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Editor directories and files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python (future venv / support as per ARCHITECTURE)
+**/.venv/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
