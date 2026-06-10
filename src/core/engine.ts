@@ -1,13 +1,10 @@
 /**
- * 蛊生态模拟器 - 模拟主循环（核心编排器）
- *
- * 这是整个单坛子模拟的“大脑”。
- * tick() 是唯一驱动世界演化的入口。
+ * 蛊生态模拟器 - 模拟主循环（已更新支持专用对战UI + 最后幸存者晋升 + 重要事件过滤）
  */
 
-import type { Gu, Food, JarState, CombatResult, EnvironmentEvent } from './types';
-import { WORLD, INITIAL_GU_COUNT, FOOD, COMBAT } from '../utils/constants';
-import { createRandomGu, computeNextPosition, gainExp, tryLevelUp, expToNextLevel } from './gu';
+import type { Gu, Food, EnvironmentEvent, BattleRecord } from './types';
+import { INITIAL_GU_COUNT, FOOD } from '../utils/constants';
+import { createRandomGu, computeNextPosition, gainExp, tryLevelUp } from './gu';
 import { resolveCombat } from './combat';
 import { checkAndEatFood, rollAndApplyEvents, spawnFood } from './environment';
 import { getFoodExpMultiplier } from './traits';
@@ -16,216 +13,271 @@ export class SimulationEngine {
   gus: Gu[] = [];
   foods: Food[] = [];
   tickCount = 0;
-  eventLog: string[] = []; // 最近事件（环形缓冲，UI 消费后可截断）
+
+  // 只存放“重要”事件（用于主界面日志）
+  eventLog: string[] = [];
+
+  // 待处理的战斗（由 tick 检测到重叠后设置，由 UI 驱动 resolve）
+  pendingBattle: [Gu, Gu] | null = null;
+
+  // 坛子是否已因只剩最后一只而闭合
+  isClosed = false;
+  closedReason: string | null = null;
 
   private nextGuId = 1;
-  private recentEvents: EnvironmentEvent[] = [];
+  private recentEnvEvents: EnvironmentEvent[] = [];
 
   constructor(initialCount = INITIAL_GU_COUNT) {
     this.reset(initialCount);
   }
 
-  /** 重置整个坛子（全新随机种群） */
   reset(initialCount = INITIAL_GU_COUNT): void {
     this.gus = [];
     this.foods = [];
     this.tickCount = 0;
-    this.eventLog = ['模拟已重置'];
-    this.recentEvents = [];
+    this.eventLog = ['模拟开始'];
+    this.pendingBattle = null;
+    this.isClosed = false;
+    this.closedReason = null;
+    this.recentEnvEvents = [];
     this.nextGuId = 1;
 
     for (let i = 0; i < initialCount; i++) {
-      this.gus.push(createRandomGu(this.nextGuId++));
+      const gu = createRandomGu(this.nextGuId++);
+      gu.fights = 0;
+      gu.wins = 0;
+      gu.battleHistory = [];
+      gu.notableEvents = [];
+      this.gus.push(gu);
     }
 
-    // 初始撒一些食物
-    for (let i = 0; i < 6; i++) {
-      this.foods.push(spawnFood());
-    }
+    for (let i = 0; i < 6; i++) this.foods.push(spawnFood());
   }
 
-  /**
-   * 推进 N 个逻辑 tick（由外部根据速度档位决定每帧推进多少）
-   */
+  /** 主推进（外部根据速度调用） */
   tick(steps = 1): void {
+    if (this.isClosed || this.pendingBattle) return; // 闭合或等待战斗时不推进
+
     for (let s = 0; s < steps; s++) {
       this.tickCount++;
 
-      // 1. 移动阶段
       this.moveAll();
 
-      // 2. 吃食阶段
+      // 吃食（不记录为事件）
       const eaten = checkAndEatFood(this.gus, this.foods);
-      for (const gu of this.gus) {
-        // 简化：每个蛊本 tick 最多吃一个（实际 eaten 里可能有多个，但这里只给一次）
-      }
       if (eaten.length > 0) {
-        // 给随机吃到食物的蛊加经验（更真实做法是记录谁吃了哪个，这里简化）
-        const lucky = this.gus[Math.floor(Math.random() * this.gus.length)];
+        // 随机给一个吃到食物的蛊经验 + 血量恢复（静默）
+        const lucky = this.gus.find(g => g.hp > 0);
         if (lucky) {
           const mult = getFoodExpMultiplier(lucky);
-          const gained = gainExp(lucky, FOOD.BASE_VALUE, mult);
-          this.pushLog(`蛊#${lucky.id} 吃到了食物 (+${gained} exp)`);
+          gainExp(lucky, FOOD.BASE_VALUE, mult);
+          // 吃食物恢复血量（赢了的蛊可逐渐恢复）
+          lucky.hp = Math.min(lucky.maxHp, lucky.hp + FOOD.HEAL_ON_EAT);
         }
       }
 
-      // 3. 战斗阶段（重叠即触发）
-      this.resolveCombats();
+      // 检测战斗 —— 不立即 resolve，而是设置 pendingBattle 让 UI 接管
+      this.detectAndQueueBattles();
 
-      // 4. 环境事件
+      // 环境事件（只重要事件进日志）
       const evt = rollAndApplyEvents(this.tickCount, this.gus, this.foods);
       if (evt) {
-        this.recentEvents.push(evt);
-        this.pushLog(`[事件] ${evt.description}`);
+        this.pushImportantLog(`[事件] ${evt.description}`);
+        // 如果是 mutation_wave，给一些蛊记 notable
+        if (evt.type === 'mutation_wave') {
+          this.gus.filter(g => g.hp > 0).slice(0, 3).forEach(g => {
+            g.notableEvents.push(`T${this.tickCount}: 感受到突变潮`);
+          });
+        }
       }
 
-      // 5. 升级检查 + 变异
-      this.checkLevelUps();
-
-      // 6. 死亡移除 + 食物生成
+      this.checkLevelUpsAndRecord();
       this.removeDead();
       this.spawnFoods();
-
-      // 7. 简单再生（带 regen 特质的蛊）
       this.applyPassiveRegen();
+
+      // 检查是否只剩最后一只
+      this.checkLastSurvivor();
     }
   }
 
-  private moveAll(): void {
-    // 预计算“附近是否有尸体”（简化：只看是否有 hp<=0 的蛊）
-    const hasCorpse = this.gus.some((g) => g.hp <= 0);
+  /** 由 UI 在战斗结束后调用，清理战场并记录重要结果 */
+  finalizeCombat(winner: Gu, loser: Gu, combatLogs: string[], inheritedNames: string[]): void {
+    // 记录战斗历史到双方
+    const recordForWinner: BattleRecord = { vsId: loser.id, won: true, inherited: inheritedNames };
+    const recordForLoser: BattleRecord = { vsId: winner.id, won: false, inherited: [] };
 
-    for (const gu of this.gus) {
-      if (gu.hp <= 0) continue;
+    winner.fights = (winner.fights || 0) + 1;
+    winner.wins = (winner.wins || 0) + 1;
+    winner.battleHistory = [...(winner.battleHistory || []), recordForWinner];
 
-      // 找最近食物（简化）
-      let nearestFood: { x: number; y: number } | null = null;
-      let minFoodDist = Infinity;
-      for (const f of this.foods) {
-        const d = (gu.x - f.x) ** 2 + (gu.y - f.y) ** 2;
-        if (d < minFoodDist) {
-          minFoodDist = d;
-          nearestFood = f;
-        }
-      }
+    loser.fights = (loser.fights || 0) + 1;
+    loser.battleHistory = [...(loser.battleHistory || []), recordForLoser];
 
-      // 找最近其他活蛊
-      let nearestOther: { x: number; y: number; isDead?: boolean } | null = null;
-      let minOtherDist = Infinity;
-      for (const other of this.gus) {
-        if (other.id === gu.id || other.hp <= 0) continue;
-        const d = (gu.x - other.x) ** 2 + (gu.y - other.y) ** 2;
-        if (d < minOtherDist) {
-          minOtherDist = d;
-          nearestOther = other;
-        }
-      }
+    // 只把“关键结果”记入主日志
+    const inheritText = inheritedNames.length > 0 ? ` 并继承了 ${inheritedNames.join('、')}` : '';
+    this.pushImportantLog(`蛊#${winner.id} 击败了 蛊#${loser.id}${inheritText}`);
 
-      const { x, y } = computeNextPosition(gu, nearestFood, nearestOther);
-      gu.x = x;
-      gu.y = y;
-    }
+    // 实际移除失败者（由 engine 控制）
+    this.gus = this.gus.filter(g => g.id !== loser.id);
+
+    // 清空待战状态
+    this.pendingBattle = null;
+
+    // 再次检查幸存者（可能这次战斗后只剩1只）
+    this.checkLastSurvivor();
   }
 
-  private resolveCombats(): void {
-    // 收集重叠配对（避免迭代删除问题）
-    const pairs: [Gu, Gu][] = [];
+  /** 外部（UI）可调用的跳过战斗 */
+  skipPendingBattle(): void {
+    if (!this.pendingBattle) return;
+    const [a, b] = this.pendingBattle;
+    const result = resolveCombat(a, b);
+    this.finalizeCombat(result.winner, result.loser, result.logs, result.inheritedTraits.map(t => t.name));
+  }
+
+  private detectAndQueueBattles(): void {
+    if (this.pendingBattle) return;
+
     for (let i = 0; i < this.gus.length; i++) {
       const a = this.gus[i];
       if (a.hp <= 0) continue;
       for (let j = i + 1; j < this.gus.length; j++) {
         const b = this.gus[j];
         if (b.hp <= 0) continue;
+
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const distSq = dx * dx + dy * dy;
-        // 重叠判定半径（两个蛊的“体型”）
         const r = 11 + Math.min(a.level, 6) * 0.6;
+
         if (distSq < r * r) {
-          pairs.push([a, b]);
+          // 发现战斗！暂停推进，交给 UI
+          this.pendingBattle = [a, b];
+          return;
         }
       }
     }
-
-    for (const [a, b] of pairs) {
-      if (a.hp <= 0 || b.hp <= 0) continue;
-      const result: CombatResult = resolveCombat(a, b);
-      // 记录战斗日志
-      result.logs.forEach((l) => this.pushLog(l));
-
-      // 胜利者继承已在 combat 里直接写入了 winner.traits
-      // 这里只需要给额外经验（combat 已给基础）
-    }
   }
 
-  private checkLevelUps(): void {
+  private checkLevelUpsAndRecord(): void {
     for (const gu of this.gus) {
       if (gu.hp <= 0) continue;
       const gained = tryLevelUp(gu);
       if (gained.length > 0) {
-        this.pushLog(
-          `蛊#${gu.id} 升级到 Lv.${gu.level}，获得新特质：${gained.map((t) => t.name).join('、')}`
-        );
+        const names = gained.map(t => t.level > 1 ? `${t.name} Lv.${t.level}` : t.name );
+        this.pushImportantLog(`蛊#${gu.id} 升级到 Lv.${gu.level}，获得新特质：${names.join('、')}`);
+        gu.notableEvents.push(`T${this.tickCount}: 升级获得 ${names.join('、')}`);
       }
     }
   }
 
   private removeDead(): void {
     const before = this.gus.length;
-    this.gus = this.gus.filter((g) => g.hp > 0);
+    this.gus = this.gus.filter(g => g.hp > 0);
     if (this.gus.length < before) {
-      this.pushLog(`有 ${before - this.gus.length} 只蛊虫死亡`);
+      // 死亡本身不算“重要”到主日志，除非是最后一只
     }
   }
 
   private spawnFoods(): void {
-    // 每 FOOD.SPAWN_INTERVAL tick 尝试生成
     if (this.tickCount % FOOD.SPAWN_INTERVAL === 0) {
       const count = FOOD.SPAWN_COUNT_MIN + Math.floor(Math.random() * (FOOD.SPAWN_COUNT_MAX - FOOD.SPAWN_COUNT_MIN + 1));
-      for (let i = 0; i < count; i++) {
-        this.foods.push(spawnFood());
-      }
+      for (let i = 0; i < count; i++) this.foods.push(spawnFood());
     }
   }
 
   private applyPassiveRegen(): void {
     for (const gu of this.gus) {
       if (gu.hp <= 0 || gu.hp >= gu.maxHp) continue;
-      // 拥有 regen 且非频繁触发（每 10 tick）
-      if (gu.traits.some((t) => t.id === 'regen') && this.tickCount % 10 === 0) {
+      if (gu.traits.some(t => t.id === 'regen') && this.tickCount % 10 === 0) {
         gu.hp = Math.min(gu.maxHp, gu.hp + 1 + Math.floor(Math.random() * 1.5));
       }
     }
   }
 
-  private pushLog(msg: string): void {
+  private moveAll(): void {
+    const hasCorpse = this.gus.some(g => g.hp <= 0);
+    for (const gu of this.gus) {
+      if (gu.hp <= 0) continue;
+
+      let nearestFood: {x:number;y:number} | null = null;
+      let minD = Infinity;
+      for (const f of this.foods) {
+        const d = (gu.x - f.x) ** 2 + (gu.y - f.y) ** 2;
+        if (d < minD) { minD = d; nearestFood = f; }
+      }
+      let nearestOther: {x:number;y:number; isDead?:boolean} | null = null;
+      minD = Infinity;
+      for (const o of this.gus) {
+        if (o.id === gu.id || o.hp <= 0) continue;
+        const d = (gu.x - o.x) ** 2 + (gu.y - o.y) ** 2;
+        if (d < minD) { minD = d; nearestOther = o; }
+      }
+      const { x, y } = computeNextPosition(gu, nearestFood, nearestOther);
+      gu.x = x;
+      gu.y = y;
+    }
+  }
+
+  /** 只记录重要事件到主日志 */
+  private pushImportantLog(msg: string): void {
     this.eventLog.push(`[T${this.tickCount}] ${msg}`);
-    // 保留最近 60 条
-    if (this.eventLog.length > 60) this.eventLog.shift();
+    if (this.eventLog.length > 50) this.eventLog.shift();
   }
 
-  /** 返回只读快照（给渲染和 UI 使用） */
-  getSnapshot(): Readonly<JarState> {
-    return {
-      version: 1,
-      tickCount: this.tickCount,
-      gus: this.gus.map((g) => ({ ...g, traits: [...g.traits] })), // 浅拷贝足够
-      foods: this.foods.map((f) => ({ ...f })),
+  /** 检查是否只剩最后一只，进行晋升并闭合坛子 */
+  private checkLastSurvivor(): void {
+    if (this.isClosed) return;
+    const alive = this.gus.filter(g => g.hp > 0);
+    if (alive.length === 1 && this.gus.length > 0) {
+      const king = alive[0];
+      // 晋升逻辑由外部（UI/App）调用 promoteLastSurvivor 更灵活，这里只标记
+      this.isClosed = true;
+      this.closedReason = `只剩蛊#${king.id}，坛子自动闭合`;
+      this.pushImportantLog(`只剩最后一只蛊#${king.id}，坛子闭合，蛊王入元！`);
+    }
+  }
+
+  /** 由 UI 在检测到 isClosed 后调用，完成晋升 */
+  promoteLastSurvivor(): any {
+    const alive = this.gus.filter(g => g.hp > 0);
+    if (alive.length !== 1) return null;
+
+    const king = alive[0];
+
+    // 构建丰富的 GuYuan 数据
+    const yuanData = {
+      id: `yuan-${Date.now()}`,
+      baseGu: {
+        ...king,
+        finalTraits: [...king.traits],
+        finalLevel: king.level,
+        fights: king.fights || 0,
+        wins: king.wins || 0,
+        notableEvents: [...(king.notableEvents || [])],
+        battleSummary: [...(king.battleHistory || [])],
+      } as any,
+      power: king.level * 10 + (king.fights || 0) * 2 + (king.wins || 0) * 5,
+      wins: king.wins || 0,
+      createdTick: this.tickCount,
+      sourceJarClosed: true,
     };
+
+    // 清空当前坛子蛊虫（坛子已闭合）
+    this.gus = [];
+    this.foods = [];
+    this.pushImportantLog(`蛊王 #${king.id} 已入元。`);
+
+    return yuanData;
   }
 
-  /** 简易序列化（完整保存当前状态） */
-  toJSON(): JarState {
-    return this.getSnapshot() as JarState;
-  }
-
-  /** 从保存的状态恢复（会重置 nextId 等） */
-  loadFromState(state: JarState): void {
-    this.tickCount = state.tickCount;
-    this.gus = state.gus.map((g) => ({ ...g, traits: [...g.traits] }));
-    this.foods = state.foods.map((f) => ({ ...f }));
-    this.eventLog = [`已从存档加载（tick ${this.tickCount}）`];
-    this.nextGuId = Math.max(0, ...this.gus.map((g) => g.id)) + 1;
-    this.recentEvents = [];
+  getSnapshot() {
+    return {
+      version: 1 as const,
+      tickCount: this.tickCount,
+      gus: this.gus.map(g => ({ ...g, traits: [...g.traits], battleHistory: [...(g.battleHistory || [])], notableEvents: [...(g.notableEvents || [])] })),
+      foods: this.foods.map(f => ({ ...f })),
+    };
   }
 }

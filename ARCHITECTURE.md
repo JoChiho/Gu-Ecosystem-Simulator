@@ -86,37 +86,39 @@ gu-ecosystem-simulator/
 - engine.tick() 内部按概率（或固定间隔 + 随机）调用。
 - 事件可直接修改 engine 内部状态（食物数量、蛊属性等），并向 eventLog 追加记录。
 
-### 3.2 蛊的基础属性和特质效果计算
-- **数据结构**：`src/core/types.ts` 中的 `interface Gu`（atk, def, spd, hp, maxHp, level, exp, x, y, personality: Personality, traits: Trait[]）。
-- **特质定义与效果**：`src/core/traits.ts`
-  - `TRAIT_REGISTRY: Record<string, TraitDefinition>`
-  - `applyCombatEffects(attacker, defender, log: string[])` —— 进攻/防御类效果在此实现。
-  - `getMovementBias(gu, nearby)` —— 功能/性格相关移动加成。
-  - `getStatModifiers(gu)` —— 基础属性修正。
-- **升级与变异**：`src/core/gu.ts` 的 `tryLevelUp()` 从 registry 随机挑选（考虑 stackable 和 unstable 特质）。
-- 计算调用链：engine / combat → traits.ts（纯函数）。
+### 3.2 蛊的基础属性和特质/技能效果计算（三层属性系统）
+- **数据结构**（`src/core/types.ts`）：
+  - `BaseStats`：atk / def / specialAtk / specialDef / spd / maxHp / mp / level（直接存储在 Gu）。
+  - `DerivedCombatStats`：effectivePhysicalAtk 等战斗有效值 + counterRate / defenseRate / initiative 等。
+  - `MetaStats`：luck / skillUsageRate / mutationRate。
+  - `CombatContext` + `EffectResult`：统一特质/技能效果管道。
+- **属性解析**：`src/core/stats.ts`
+  - `getBaseStats(gu)`
+  - `getDerivedStats(gu, context)`
+  - `applyMetaModifiers(...)`
+- **特质效果**：`src/core/traits.ts` → `getTraitEffects(trigger: TraitTrigger, context)`（模块化 per-trigger）。
+- **技能系统**：`src/core/skills.ts` → `tryActivateSkill` + 效果注册（与特质平行，通过 skillUsageRate 控制发动）。
+- **升级与变异**：`src/core/gu.ts` 的 `tryLevelUp()` 使用 mutationRate + stats 成长新基础属性。
+- 计算调用链：engine → combat → (stats + traits + skills)。所有公式集中在 combat.ts。
 
 ### 3.3 战斗解析器
 **唯一位置**：`src/core/combat.ts`
 
-导出：
+核心职责：
+- 构建 `CombatContext`
+- 使用 `stats.getDerivedStats` 获取有效值
+- 通过 `getTraitEffects` + `tryActivateSkill` 统一应用效果（支持物理/特殊双轨）
+- 实现确认的伤害公式（含 defenseRate、counterRate、crit、variance、luck 调制）
+- 回合制 + 行动顺序（基于 initiative）
+- 特质/技能触发（pre_attack / on_attack / on_hit 等）
+- 经验、继承、历史记录
+
+导出保持兼容：
 ```ts
-export interface CombatResult {
-  winner: Gu;
-  loser: Gu;
-  logs: string[];
-  inheritedTraits: Trait[];
-}
 export function resolveCombat(guA: Gu, guB: Gu): CombatResult;
 ```
 
-实现要点（必须严格遵守）：
-1. 按速度（spd）决定先手（或每轮重新比较）。
-2. 回合制循环（最多 MAX_TICKS_PER_FIGHT_ROUND 轮，防止卡死）。
-3. 每回合基础伤害 `Math.max(1, attacker.atk - defender.def)` + 特质修正。
-4. 通过调用 traits.ts 的 hook 应用特效（毒、狂暴、硬壳等）。
-5. 胜利者获得经验 + 从失败者随机挑选 1~2 个特质复制（允许堆叠由 registry 控制）。
-6. 返回详细 CombatResult，engine 负责应用结果并记录日志。
+所有公式和规则只允许出现在此文件。特质/技能只通过 EffectResult 提供修正。
 
 **严禁**在 engine.ts 或其他文件里写战斗判定逻辑。
 
