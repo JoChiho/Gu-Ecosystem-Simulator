@@ -8,7 +8,14 @@
  *   - MetaStats：影响概率和成长的上游属性（luck、skillUsageRate、mutationRate）
  */
 
-export type Personality = 'aggressive' | 'cautious' | 'opportunistic' | 'balanced';
+export type Personality = 
+  | 'aggressive' 
+  | 'cautious' 
+  | 'opportunistic' 
+  | 'balanced'
+  | 'naive'       // 新增：天真
+  | 'ferocious'   // 新增：凶残
+  | 'cunning';    // 新增：狡猾
 
 export type TraitType = 'offense' | 'defense' | 'utility' | 'mutation';
 
@@ -55,7 +62,6 @@ export interface DerivedCombatStats {
   critDamageMult: number;
   damageVariance: number;
   effectiveSkillUsageRate: number;
-  fleeChance: number;           // 逃跑概率，由属性和性格随机决定
   lifestealRate?: number;
   // 未来可轻松扩展：elementalPenetration, statusChance 等
 }

@@ -4,7 +4,7 @@
 
 import type { Gu, Food, EnvironmentEvent, BattleRecord } from './types';
 import { INITIAL_GU_COUNT, FOOD } from '../utils/constants';
-import { createRandomGu, computeNextPosition, gainExp, tryLevelUp } from './gu';
+import { createRandomGu, computeNextPosition, gainExp, tryLevelUp, expToNextLevel } from './gu';
 import { resolveCombat } from './combat';
 import { checkAndEatFood, rollAndApplyEvents, spawnFood } from './environment';
 import { getFoodExpMultiplier } from './traits';
@@ -64,15 +64,24 @@ export class SimulationEngine {
       this.moveAll();
 
       // 吃食（不记录为事件）
+      // 改进：将食物好处分配给多个存活的蛊，让更多蛊能获得经验和回血（解决“只有一只蛊升级”和赢家恢复问题）
       const eaten = checkAndEatFood(this.gus, this.foods);
       if (eaten.length > 0) {
-        // 随机给一个吃到食物的蛊经验 + 血量恢复（静默）
-        const lucky = this.gus.find(g => g.hp > 0);
-        if (lucky) {
-          const mult = getFoodExpMultiplier(lucky);
-          gainExp(lucky, FOOD.BASE_VALUE, mult);
-          // 吃食物恢复血量（赢了的蛊可逐渐恢复）
-          lucky.hp = Math.min(lucky.maxHp, lucky.hp + FOOD.HEAL_ON_EAT);
+        let living = this.gus.filter(g => g.hp > 0);
+        if (living.length > 0) {
+          // 按等级排序 + 少量随机抖动，优先低级但保持个体差异（避免全体同时升级）
+          living = living.sort((a, b) => {
+            const levelDiff = a.level - b.level;
+            const jitterA = (Math.random() - 0.5) * 2;
+            const jitterB = (Math.random() - 0.5) * 2;
+            return levelDiff + jitterA - jitterB;
+          });
+          for (let i = 0; i < eaten.length; i++) {
+            const lucky = living[i % living.length];
+            const mult = getFoodExpMultiplier(lucky);
+            gainExp(lucky, FOOD.BASE_VALUE, mult);
+            lucky.hp = Math.min(lucky.maxHp, lucky.hp + FOOD.HEAL_ON_EAT);
+          }
         }
       }
 
@@ -133,7 +142,8 @@ export class SimulationEngine {
     if (!this.pendingBattle) return;
     const [a, b] = this.pendingBattle;
     const result = resolveCombat(a, b);
-    this.finalizeCombat(result.winner, result.loser, result.logs, result.inheritedTraits.map(t => t.name));
+    // resolveCombat 保证 winner/loser 非空（战斗逻辑已确保）
+    this.finalizeCombat(result.winner!, result.loser!, result.logs, result.inheritedTraits.map(t => t.name));
   }
 
   private detectAndQueueBattles(): void {
@@ -191,7 +201,7 @@ export class SimulationEngine {
     for (const gu of this.gus) {
       if (gu.hp <= 0 || gu.hp >= gu.maxHp) continue;
       if (gu.traits.some(t => t.id === 'regen') && this.tickCount % 10 === 0) {
-        gu.hp = Math.min(gu.maxHp, gu.hp + 1 + Math.floor(Math.random() * 1.5));
+        gu.hp = Math.min(gu.maxHp, gu.hp + 10 + Math.floor(Math.random() * 10));
       }
     }
   }

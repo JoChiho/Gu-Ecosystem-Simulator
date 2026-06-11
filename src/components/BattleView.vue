@@ -59,7 +59,7 @@ const emit = defineEmits<{
       <!-- 结果摘要 -->
       <div v-if="result" class="result-summary">
         <strong v-if="result.winnerId">胜利者：蛊 #{{ result.winnerId }}</strong>
-        <strong v-else>平局 - 一方逃跑</strong>
+        <strong v-else>平局</strong>
         <div v-if="result.inherited.length">继承特质：{{ result.inherited.join('、') }}</div>
       </div>
 

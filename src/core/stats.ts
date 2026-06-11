@@ -42,6 +42,12 @@ export function getMetaStats(gu: Gu): MetaStats {
 
   // 未来可在这里加入更多特质对 luck / skillUsageRate 的影响
   // 例如某个特质 "lucky_clover" 增加 luck
+  const p = gu.personality;
+  if (p === 'naive') {
+    luck += 8;
+    mutationRate += 0.03;
+    // skillUsageRate 已在 personality modifiers 里处理
+  }
 
   return {
     luck,
@@ -60,7 +66,6 @@ function getPersonalityModifiers(p: Personality): {
   specialAtkMult: number;
   specialDefMult: number;
   spdMult: number;
-  fleeChanceBonus: number;
   skillUsageRateBonus: number;
   critChanceBonus: number;
 } {
@@ -72,7 +77,6 @@ function getPersonalityModifiers(p: Personality): {
         specialAtkMult: 1.18,
         specialDefMult: 0.92,
         spdMult: 1.08,
-        fleeChanceBonus: -0.05,
         skillUsageRateBonus: 0.12,
         critChanceBonus: 0.06,
       };
@@ -83,7 +87,6 @@ function getPersonalityModifiers(p: Personality): {
         specialAtkMult: 0.88,
         specialDefMult: 1.15,
         spdMult: 1.05,
-        fleeChanceBonus: 0.12,
         skillUsageRateBonus: -0.04,
         critChanceBonus: -0.02,
       };
@@ -94,9 +97,18 @@ function getPersonalityModifiers(p: Personality): {
         specialAtkMult: 1.12,
         specialDefMult: 0.98,
         spdMult: 1.12,
-        fleeChanceBonus: 0.03,
         skillUsageRateBonus: 0.16,
         critChanceBonus: 0.09,
+      };
+    case 'naive': // 天真
+      return {
+        atkMult: 0.95,
+        defMult: 1.05,
+        specialAtkMult: 1.12,
+        specialDefMult: 0.98,
+        spdMult: 0.95,
+        skillUsageRateBonus: 0.08,
+        critChanceBonus: 0.05,
       };
     case 'balanced':
     default:
@@ -106,7 +118,6 @@ function getPersonalityModifiers(p: Personality): {
         specialAtkMult: 1.06,
         specialDefMult: 1.06,
         spdMult: 1.06,
-        fleeChanceBonus: 0,
         skillUsageRateBonus: 0.05,
         critChanceBonus: 0.03,
       };
@@ -150,9 +161,9 @@ export function getDerivedStats(gu: Gu, context?: Partial<CombatContext>): Deriv
 
   const damageVariance = 0.25 + meta.luck * 0.002;
 
-  // 防御率
+  // 防御率（分母 *10 保持与缩放后 def 数值匹配）
   const defenseRate =
-    Math.min(0.55, (base.def * mods.defMult / (base.def * mods.defMult + 60)) * 0.4 + (temp.defenseRateBonus ?? 0) + meta.luck * 0.001);
+    Math.min(0.55, (base.def * mods.defMult / (base.def * mods.defMult + 600)) * 0.4 + (temp.defenseRateBonus ?? 0) + meta.luck * 0.001);
 
   // 反击率
   const counterRate =
@@ -166,18 +177,7 @@ export function getDerivedStats(gu: Gu, context?: Partial<CombatContext>): Deriv
     (meta.skillUsageRate + (temp.skillUsageRateBonus ?? 0) + mods.skillUsageRateBonus) *
     (1 + meta.luck * 0.002);
 
-  // 逃跑概率：基础只有1% + 绝望（低血） + 性格修正 + luck 微调
-  // 这样早期战斗不会轻易就逃跑，增加随机性和趣味性
-  // 逃跑概率：每次行动（攻击方回合）基础只有1% 
-  // + 低血时的绝望加成（最高+12%）
-  // + 性格修正（胆小性格会增加，但不是主要决定因素）
-  // + luck 微调
-  // 这样可以保证战斗会正常进行，不会一上来就逃。
-  let fleeChance = 0.01 + (1 - (gu.hp / gu.maxHp)) * 0.12;
-  fleeChance += mods.fleeChanceBonus;
-  fleeChance += meta.luck * 0.0005;
-  fleeChance = Math.max(0.005, Math.min(0.65, fleeChance));
-
+  // （原逃跑概率计算已完全移除。战斗不再有逃跑/中断，所有战斗进行至一方死亡。）
   return {
     effectivePhysicalAtk,
     effectivePhysicalDef,
@@ -192,7 +192,6 @@ export function getDerivedStats(gu: Gu, context?: Partial<CombatContext>): Deriv
     critDamageMult,
     damageVariance,
     effectiveSkillUsageRate,
-    fleeChance,
     lifestealRate: temp.lifestealBonus ?? 0,
   };
 }

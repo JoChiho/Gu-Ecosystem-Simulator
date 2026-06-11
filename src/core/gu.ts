@@ -65,7 +65,7 @@ export function createRandomGu(id: number): Gu {
   // 新基础属性：特攻、特防、MP
   const specialAtk = randInt(Math.floor(GU_INIT.ATK_MIN * 0.6), Math.floor(GU_INIT.ATK_MAX * 1.1));
   const specialDef = randInt(Math.floor(GU_INIT.DEF_MIN * 0.6), Math.floor(GU_INIT.DEF_MAX * 1.1));
-  const mp = randInt(12, 22);
+  const mp = randInt(120, 220);
 
   const initialTraits: Trait[] = [];
   const starterCount = randInt(0, 2);
@@ -120,16 +120,26 @@ export function tryLevelUp(gu: Gu): Trait[] {
   gu.exp -= needed;
   gu.level += 1;
 
-  // 扩展成长：支持新基础属性（物理/特殊/速度）
-  const statRoll = randInt(0, 4);
-  if (statRoll === 0) gu.atk += LEVEL.STAT_POINTS_PER_LEVEL;
-  else if (statRoll === 1) gu.def += LEVEL.STAT_POINTS_PER_LEVEL;
-  else if (statRoll === 2) gu.specialAtk = (gu.specialAtk ?? 0) + LEVEL.STAT_POINTS_PER_LEVEL;
-  else if (statRoll === 3) gu.specialDef = (gu.specialDef ?? 0) + LEVEL.STAT_POINTS_PER_LEVEL;
-  else gu.spd += LEVEL.STAT_POINTS_PER_LEVEL;
+  // 非线性 + 高随机性的基础数值总值成长
+  // 每级增加的总点数 = STAT_BASE_INCREASE + floor( STAT_GROWTH_EXPONENT 影响 ) + 随机
+  const basePoints = LEVEL.STAT_BASE_INCREASE + Math.floor( Math.pow(gu.level, LEVEL.STAT_GROWTH_EXPONENT) * 0.8 );
+  const variance = randInt( -LEVEL.STAT_VARIANCE , LEVEL.STAT_VARIANCE );
+  let totalPoints = Math.max(3, basePoints + variance);
 
-  // MP 缓慢成长
-  gu.mp = (gu.mp ?? 0) + randInt(0, 1);
+  // 随机分配到基础属性（高随机性：有些等级可能集中某些属性）
+  const statKeys = ['atk', 'def', 'specialAtk', 'specialDef', 'spd'];
+  for (let p = 0; p < totalPoints; p++) {
+    const key = statKeys[ randInt(0, statKeys.length - 1) ];
+    if (key === 'atk') gu.atk += 1;
+    else if (key === 'def') gu.def += 1;
+    else if (key === 'specialAtk') gu.specialAtk = (gu.specialAtk ?? 0) + 1;
+    else if (key === 'specialDef') gu.specialDef = (gu.specialDef ?? 0) + 1;
+    else if (key === 'spd') gu.spd += 1;
+  }
+
+  // maxHp 和 mp 也获得成长（总值增加，*10 缩放后）
+  gu.maxHp += Math.floor(20 + gu.level * 4) + randInt(0, 20);
+  gu.mp = (gu.mp ?? 0) + randInt(10, 30);
 
   const newTraits: Trait[] = [];
   const newTraitDef = pickRandomNewTrait(gu.traits);
@@ -146,7 +156,7 @@ export function tryLevelUp(gu: Gu): Trait[] {
       newTraits.push({ ...extraDef, level: acquired.level, acquisitions: acquired.acquisitions });
     }
   }
-  gu.hp = gu.maxHp;
+  gu.hp = gu.maxHp;  // 升级回满
   return newTraits;
 }
 
@@ -190,19 +200,4 @@ export function computeNextPosition(gu: Gu, nearestFood: any, nearestOther: any,
   return { x: nx, y: ny };
 }
 
-/**
- * 逃跑后将两个蛊随机重置到坛子中不相邻的位置，避免立即再次触发战斗
- */
-export function separateAfterFlee(gu1: Gu, gu2: Gu) {
-  gu1.x = randInt(WORLD.MARGIN, WORLD.WIDTH - WORLD.MARGIN);
-  gu1.y = randInt(WORLD.MARGIN, WORLD.HEIGHT - WORLD.MARGIN);
-
-  let attempts = 0;
-  let dist = 0;
-  do {
-    gu2.x = randInt(WORLD.MARGIN, WORLD.WIDTH - WORLD.MARGIN);
-    gu2.y = randInt(WORLD.MARGIN, WORLD.HEIGHT - WORLD.MARGIN);
-    dist = Math.hypot(gu2.x - gu1.x, gu2.y - gu1.y);
-    attempts++;
-  } while (dist < 120 && attempts < 40); // 保证足够距离，避免立即重叠触发新战斗
-}
+// 逃跑机制已完全移除（用户要求取消频繁中断）。战斗现在始终进行至一方死亡。

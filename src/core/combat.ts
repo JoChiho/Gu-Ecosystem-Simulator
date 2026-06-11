@@ -5,21 +5,12 @@
  * 完全基于三层属性系统 + CombatContext + 统一触发管道。
  */
 
-import type { Gu, CombatResult, Trait, CombatContext, EffectResult, DamageType, Personality } from './types';
+import type { Gu, CombatResult, Trait, CombatContext, EffectResult, DamageType } from './types';
 import { COMBAT } from '../utils/constants';
 import { getDerivedStats, getMetaStats } from './stats';
 import { getTraitEffects, hasTrait } from './traits';
 import { tryActivateSkill } from './skills';
-import { acquireTrait, separateAfterFlee } from './gu';
-
-function getFleeProbability(p: Personality): number {
-  switch (p) {
-    case 'cautious': return 0.85;
-    case 'aggressive': return 0.25;
-    case 'opportunistic': return 0.55;
-    default: return 0.5;
-  }
-}
+import { acquireTrait } from './gu';
 
 /**
  * 按速度（initiative）决定行动顺序
@@ -102,24 +93,15 @@ function calculateDamage(context: CombatContext): number {
 
 /**
  * 单回合处理（支持特质/技能触发 + 反击率 + 防御率）
- * 返回 { damage, fled, fleer }
  */
-function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumber: number): { damage: number; fled: boolean; fleer: Gu | null } {
+function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumber: number): number {
   // 构建上下文
   let ctx = buildContext(attacker, defender, roundNumber);
 
-  // 逃跑检查：由当前 fleeChance（基础属性 + 性格 + 状态）随机决定，增加随机性
-  const derivedA = getDerivedStats(attacker, ctx);
-  if (ctx.random() < derivedA.fleeChance) {
-    roundLogs.push(`蛊#${attacker.id} 因为当前状态和性格决定逃跑！战斗结束。`);
-    return { damage: 0, fled: true, fleer: attacker };
-  }
-
   // 特质触发特殊报告（在自动战斗中可见过程）
-  // 例如不稳定特质导致本次无攻击
   if (hasTrait(attacker, 'unstable') && Math.random() < 0.25) {
     roundLogs.push(`因为不稳定，所以蛊#${attacker.id}本次没有攻击！`);
-    return { damage: 0, fled: false, fleer: null }; // 本回合无伤害，跳过后续
+    return 0; // 本回合无伤害
   }
 
   // 1. 技能尝试（使用 skillUsageRate）
@@ -127,11 +109,9 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   if (skillResult?.activated) {
     applyEffectsToContext(skillResult.effects, ctx);
     roundLogs.push(...skillResult.logs);
-    // 技能可能改变伤害类型
     if (skillResult.skill.damageType) {
       ctx.damageType = skillResult.skill.damageType;
     }
-    // 扣 MP（简化，实际可由 engine 统一处理）
     attacker.mp = Math.max(0, (attacker.mp ?? 0) - skillResult.mpCost);
   }
 
@@ -150,14 +130,14 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   roundLogs.push(...ctx.logs);
 
   // 4. 触发 on_hit（防御方）
-  const hitCtx = buildContext(defender, attacker, roundNumber, ctx.damageType); // 反转视角
+  const hitCtx = buildContext(defender, attacker, roundNumber, ctx.damageType);
   const hitEffects = getTraitEffects('on_hit', hitCtx);
   applyEffectsToContext(hitEffects, hitCtx);
 
   // 5. 反击判定（使用 counterRate）
   const derivedDef = getDerivedStats(defender, hitCtx);
   if (defender.hp > 0 && Math.random() < derivedDef.counterRate) {
-    const counterDamage = Math.floor(derivedDef.effectivePhysicalAtk * 0.55); // 更明显的反击伤害
+    const counterDamage = Math.max(COMBAT.MIN_DAMAGE, Math.floor(derivedDef.effectivePhysicalAtk * 0.55));
     attacker.hp = Math.max(0, attacker.hp - counterDamage);
     roundLogs.push(`蛊#${defender.id} 发动反击，造成 ${counterDamage} 点伤害！`);
   }
@@ -167,7 +147,7 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   applyEffectsToContext(postEffects, ctx);
   roundLogs.push(...postEffects.filter(e => e.log).map(e => e.log!));
 
-  return { damage, fled: false, fleer: null };
+  return damage;
 }
 
 /**
@@ -181,26 +161,30 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
   const b = guB;
 
   let round = 0;
-  let currentAttacker = a;
-  let currentDefender = b;
 
+  // 逃跑/中断机制已移除。战斗始终进行至一方死亡（使用较高 MAX_ROUNDS 兜底，实际因 MIN_DAMAGE 远小于 HP，通常 <15 交换即结束）
   while (a.hp > 0 && b.hp > 0 && round < COMBAT.MAX_ROUNDS) {
     round++;
 
-    const [first, second] = getActionOrder(a, b, buildContext(a, b, round), buildContext(b, a, round));
-    currentAttacker = first;
-    currentDefender = second;
+    // 每个“回合”（major exchange）保证双方都有行动机会
+    // 先决定谁先手（速度优势），然后双方依次完整行动一次
+    const [initiator, responder] = getActionOrder(a, b, buildContext(a, b, round), buildContext(b, a, round));
 
-    const roundRes = resolveRound(currentAttacker, currentDefender, logs, round);
+    // 发起方行动
+    resolveRound(initiator, responder, logs, round);
+    if (responder.hp <= 0) break;
 
-    if (roundRes.fled) {
-      logs.push(`蛊#${roundRes.fleer!.id} 逃跑，战斗以平局结束。`);
-      // 立即打散位置，防止战斗结束后位置还重叠马上重触发
-      separateAfterFlee(a, b);
-      break;
+    // 响应方也获得完整行动（回合制核心：双方都行动）
+    resolveRound(responder, initiator, logs, round);
+    if (initiator.hp <= 0) break;
+
+    // 速度显著优势者额外行动一次（速度的价值）
+    const initI = getDerivedStats(initiator, buildContext(initiator, responder, round)).initiative;
+    const initR = getDerivedStats(responder, buildContext(responder, initiator, round)).initiative;
+    if (initI > initR * 1.65) {
+      resolveRound(initiator, responder, logs, round);
+      if (responder.hp <= 0) break;
     }
-
-    if (currentDefender.hp <= 0) break;
   }
 
   const winner = a.hp > 0 ? a : b;
@@ -234,20 +218,6 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
     }
   } else {
     logs.push(`战斗结束，蛊#${loser.id} 并未死亡，无继承触发。`);
-    // 逃跑平局：一方逃跑，无胜者，双方无经验
-    // 逃跑概率受性格影响
-    const probA = getFleeProbability(a.personality);
-    const probB = getFleeProbability(b.personality);
-    const fleeGu = Math.random() * (probA + probB) < probA ? a : b;
-    logs.push(`因为性格（${fleeGu.personality}），蛊#${fleeGu.id} 选择逃跑，战斗以平局结束。双方均未获得经验。`);
-    // 重置位置，避免立即再次战斗
-    separateAfterFlee(a, b);
-    return {
-      winner: null,
-      loser: null,
-      logs,
-      inheritedTraits: [],
-    };
   }
 
   return {
@@ -259,13 +229,9 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
 }
 
 // Exported for progressive/step-by-step battle in BattleView (for observable process)
-export function executeBattleRound(attacker: Gu, defender: Gu, roundNumber: number): { logs: string[]; over: boolean; fled: boolean } {
+export function executeBattleRound(attacker: Gu, defender: Gu, roundNumber: number): { logs: string[]; over: boolean } {
   const roundLogs: string[] = [];
-  const res = resolveRound(attacker, defender, roundLogs, roundNumber);
-  if (res.fled) {
-    roundLogs.push(`战斗因逃跑结束。`);
-    return { logs: roundLogs, over: true, fled: true };
-  }
+  resolveRound(attacker, defender, roundLogs, roundNumber);
   const over = attacker.hp <= 0 || defender.hp <= 0;
-  return { logs: roundLogs, over, fled: false };
+  return { logs: roundLogs, over };
 }

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 import { SimulationEngine } from './core/engine';
-import type { Gu, Personality } from './core/types';
+import type { Gu } from './core/types';
 import SimulationCanvas from './components/SimulationCanvas.vue';
 import BattleView from './components/BattleView.vue';
 import { resolveCombat, executeBattleRound } from './core/combat';   // 顶部导入，保证对战时可用
-import { acquireTrait } from './core/gu';
-import { separateAfterFlee } from './core/gu';
+import { acquireTrait, tryLevelUp } from './core/gu';
+import { getMetaStats, getDerivedStats } from './core/stats';
+import { COMBAT, FOOD } from './utils/constants';
 
 const engine = new SimulationEngine(12);
 const snapshot = ref(engine.getSnapshot());
@@ -78,34 +79,81 @@ function performNextRound() {
 
   currentBattleRound++;
 
-  // 简单轮流或基于 spd 决定本回合攻击者（简化实现，便于观察）
-  const [att, def] = (currentBattleRound % 2 === 1) 
+  // 逃跑机制已完全取消。每个UI步（一个“回合”）保证双方都有完整行动。
+  // 战斗现在始终进行至一方 HP <= 0 才结束（无中断、无平局逃跑）。
+  const dA = getDerivedStats(battleGuA.value);
+  const dB = getDerivedStats(battleGuB.value);
+  const [initiator, responder] = (dA.initiative > dB.initiative || (dA.initiative === dB.initiative && Math.random() > 0.5)) 
     ? [battleGuA.value, battleGuB.value] 
     : [battleGuB.value, battleGuA.value];
 
-  const { logs: roundLogs, over, fled } = executeBattleRound(att, def, currentBattleRound);
-  battleLogs.value = [...battleLogs.value, ...roundLogs];
+  let allStepLogs: string[] = [];
 
-  if (fled || over) {
+  // 发起方完整行动
+  let res1 = executeBattleRound(initiator, responder, currentBattleRound);
+  allStepLogs.push(...res1.logs);
+
+  let currentOver = res1.over;
+
+  if (!currentOver) {
+    // 响应方也完整行动（回合制：双方都行动）
+    let res2 = executeBattleRound(responder, initiator, currentBattleRound);
+    allStepLogs.push(...res2.logs);
+    currentOver = res2.over;
+  }
+
+  // 速度优势额外行动（价值保留，但不影响回合制本质）
+  const initI = dA.initiative;
+  const initR = dB.initiative;
+  const fastOne = initI > initR ? initiator : responder;
+  const slowOne = initI > initR ? responder : initiator;
+  if (!currentOver && (Math.max(initI, initR) > Math.min(initI, initR) * 1.6)) {
+    let res3 = executeBattleRound(fastOne, slowOne, currentBattleRound);
+    allStepLogs.push(...res3.logs);
+    currentOver = currentOver || res3.over;
+  }
+
+  // 本步行动的个体经验（发起方更多，响应方也有 + 随机 → 个体化，不同步；*10 缩放后调整除数）
+  const initDerived = initiator === battleGuA.value ? dA : dB;
+  const respDerived = responder === battleGuA.value ? dA : dB;
+  const initExp = Math.max(1, Math.floor(initDerived.effectivePhysicalAtk / 80) + Math.floor(Math.random() * 2));
+  const respExp = Math.max(1, Math.floor(respDerived.effectivePhysicalDef / 100) + Math.floor(Math.random() * 2));
+  initiator.exp += initExp;
+  if (!(currentOver && responder.hp <= 0)) {
+    responder.exp += respExp;
+  }
+  allStepLogs.push(`蛊#${initiator.id} 获得 ${initExp} 主动经验，蛊#${responder.id} 获得 ${respExp} 响应经验`);
+
+  battleLogs.value = [...battleLogs.value, ...allStepLogs];
+
+  const over = currentOver;
+
+  if (over) {
     const winner = battleGuA.value.hp > 0 ? battleGuA.value : battleGuB.value;
     const loser = battleGuA.value.hp > 0 ? battleGuB.value : battleGuA.value;
 
-    if (fled || loser.hp > 0) {
-      // 逃跑或达到最大回合平局
-      if (fled) {
-        // 逃跑后打散位置 + 清除标志，防止立即重战斗
-        separateAfterFlee(battleGuA.value, battleGuB.value);
-        engine.pendingBattle = null;
-      }
-      if (!fled) {
-        battleLogs.value.push(`达到最大回合，战斗以平局结束。双方均未获得经验。`);
-      }
+    if (loser.hp > 0) {
+      // 理论上不应该（除非极端），作为兜底平局处理（无奖励）
+      battleLogs.value.push(`战斗结束，双方均未倒下（罕见）。`);
       battleResult.value = {
         winnerId: null,
         inherited: [],
       };
     } else {
-      // 只有败者死亡时才继承
+      // 只有败者死亡时才给经验 + 继承
+      const metaWinner = getMetaStats(winner);
+      const expGain = COMBAT.WIN_BASE_EXP + Math.floor((loser.level - winner.level) * 2);
+      const finalExp = Math.floor(expGain * (1 + (metaWinner.luck || 0) * 0.001));
+      winner.exp += finalExp;
+      battleLogs.value.push(`蛊#${winner.id} 获胜，获得 ${finalExp} 经验`);
+
+      // 立即尝试升级并记录（让玩家在战斗界面就能看到升级）
+      const gained = tryLevelUp(winner);
+      if (gained.length > 0) {
+        const names = gained.map(t => `${t.name} Lv.${t.level || 1}`);
+        battleLogs.value.push(`蛊#${winner.id} 升级！获得新特质：${names.join('、')}`);
+      }
+
       const inherited: string[] = [];
       const inheritCount = 1 + Math.floor(Math.random() * 2);
       const pool = [...loser.traits];
@@ -121,13 +169,6 @@ function performNextRound() {
         inherited,
       };
     }
-  } else if (currentBattleRound >= 15) {
-    // 兜底：达到最大回合平局（没有中途逃跑或死亡）
-    battleLogs.value.push(`达到最大回合，战斗以平局结束。双方均未获得经验。`);
-    battleResult.value = {
-      winnerId: null,
-      inherited: [],
-    };
   }
 }
 
@@ -144,27 +185,6 @@ function startAutoBattle() {
     setTimeout(step, 650); // 每回合延迟，便于观察过程
   };
   setTimeout(step, 350);
-}
-
-// 保留旧的直接调用方式以防万一，但目前使用逐步版本
-function _oldStartAutoBattle() {
-  if (!battleGuA.value || !battleGuB.value) return;
-  isResolvingBattle.value = true;
-
-  const r = resolveCombat(battleGuA.value, battleGuB.value);
-  battleLogs.value = r.logs;
-  if (r.winner) {
-    battleResult.value = {
-      winnerId: r.winner.id,
-      inherited: r.inheritedTraits.map(t => `${t.name} Lv.${t.level || 1}`),
-    };
-  } else {
-    battleResult.value = {
-      winnerId: null,
-      inherited: [],
-    };
-  }
-  isResolvingBattle.value = false;
 }
 
 function skipBattle() {
@@ -197,11 +217,16 @@ function confirmBattleResult() {
       battleLogs.value,
       battleResult.value.inherited
     );
+
+    // 战斗结束后，赢家获得额外血量恢复（通过“吃食物”机制的体现）
+    if (win) {
+      win.hp = Math.min(win.maxHp, win.hp + FOOD.HEAL_ON_EAT * 2);
+    }
   } else {
-    // 逃跑平局：双方都留在坛子中，不移除，不加经验（已在战斗逻辑中处理）
+    // 无胜者（罕见平局情况）：双方留在坛子，不移除
   }
 
-  // 无论死亡还是逃跑，清除 engine 的 pendingBattle 标志，防止战斗结束后立即因为残留标志而重新进入
+  // 清除 engine 的 pendingBattle 标志，防止战斗结束后立即重触发
   engine.pendingBattle = null;
 
   // 退出战斗模式
@@ -253,14 +278,7 @@ function onCanvasSelect(id: number | null) {
   selectedId.value = id;
 }
 
-function getFleeProbabilityForUI(p: Personality): number {
-  switch (p) {
-    case 'cautious': return 0.85;
-    case 'aggressive': return 0.25;
-    case 'opportunistic': return 0.55;
-    default: return 0.5;
-  }
-}
+// 逃跑概率相关 UI 辅助已移除（逃跑机制已完全取消）
 
 onMounted(() => {
   updateSnapshot();

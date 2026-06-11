@@ -113,6 +113,11 @@ gu-ecosystem-simulator/
 - 特质/技能触发（pre_attack / on_attack / on_hit 等）
 - 经验、继承、历史记录
 
+**重要更新（用户反馈迭代）**：
+- 逃跑机制已完全移除（原 separateAfterFlee、fled 分支、1% 基础逃跑 + 性格修正、最大回合平局中断等全部清理）。战斗现在始终进行至一方 HP <= 0 死亡决出胜负 + 经验/继承，无频繁中断。
+- 所有基础数值（GU_INIT、LEVEL 成长点数、COMBAT MIN_DAMAGE/WIN_EXP、FOOD 经验与回血、maxHp 成长等）已 *10 缩放。伤害公式现在产生有意义的整数伤害（不再 0/1），个位数修正值可正确参与计算。相关调优参数（defenseRate 分母、counter 保底、regen 等）同步调整。
+- 回合制交换逻辑（initiator + responder + speed 优势额外）保留，MAX_ROUNDS 提高但实际极少触发。
+
 导出保持兼容：
 ```ts
 export function resolveCombat(guA: Gu, guB: Gu): CombatResult;
