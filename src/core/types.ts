@@ -13,9 +13,47 @@ export type Personality =
   | 'cautious' 
   | 'opportunistic' 
   | 'balanced'
-  | 'naive'       // 新增：天真
-  | 'ferocious'   // 新增：凶残
-  | 'cunning';    // 新增：狡猾
+  | 'naive'       // 天真：幸运、技能易触发
+  | 'ferocious'   // 凶残：高攻低防，高暴击
+  | 'cunning'     // 狡猾：高速度 + 技能率
+  | 'greedy'      // 贪婪：觅食强、经验加成，但战斗较弱
+  | 'stoic'       // 坚忍：极高防御与回复，进攻乏力
+  | 'wild';       // 狂野：高速度与方差，变异倾向
+
+// 中文性格名称映射（用于UI显示）
+export const PersonalityCN: Record<Personality, string> = {
+  aggressive: '好斗',
+  cautious: '谨慎',
+  opportunistic: '机会主义',
+  balanced: '平衡',
+  naive: '天真',
+  ferocious: '凶残',
+  cunning: '狡猾',
+  greedy: '贪婪',
+  stoic: '坚忍',
+  wild: '狂野',
+};
+
+export function getPersonalityCN(p: Personality): string {
+  return PersonalityCN[p] || p;
+}
+
+export const PersonalityDescriptions: Record<Personality, string> = {
+  aggressive: '进攻强势型。攻击和特攻较高，容易暴击，但防御较低。适合主动出击。',
+  cautious: '防御谨慎型。防御和特防出色，生存能力强，但攻击较弱。',
+  opportunistic: '机会主义型。技能发动率和暴击较高，速度快，适合偷袭和投机。',
+  balanced: '全能平衡型。各属性略有加成，适应性强，无明显弱点。',
+  naive: '天真型。幸运高，技能较易触发，暴击率上升，但速度和攻击稍弱。',
+  ferocious: '凶残型。极高攻击和暴击，但防御极低，玻璃大炮风格。',
+  cunning: '狡猾型。速度极快，技能发动率高，适合先手控制。',
+  greedy: '贪婪型。觅食和经验获取优秀，战斗中偏向资源积累。',
+  stoic: '坚忍型。极高防御和特防，回复能力强，进攻乏力但皮糙肉厚。',
+  wild: '狂野型。速度和方差极高，变异倾向强，输出不稳定但潜力巨大。',
+};
+
+export function getPersonalityDescription(p: Personality): string {
+  return PersonalityDescriptions[p] || '该性格的详细效果。';
+}
 
 export type TraitType = 'offense' | 'defense' | 'utility' | 'mutation';
 
@@ -31,6 +69,7 @@ export interface Trait {
 
 export interface TraitDefinition extends Trait {
   description: string;
+  stackable?: boolean; // 是否可重复获得（用于进化或叠层）
 }
 
 // ==================== 三层属性系统 ====================
@@ -101,6 +140,7 @@ export interface CombatContext {
     skillUsageRateBonus?: number;
     damageMult?: number;
     lifestealBonus?: number;
+    heal?: number;
     // 未来新增属性时在此扩展对应字段
   };
   logs: string[];
@@ -116,6 +156,8 @@ export interface EffectResult {
   critChanceBonus?: number;
   skillUsageRateBonus?: number;
   mpCost?: number;
+  heal?: number;          // 直接治疗（正数）
+  lifesteal?: number;     // 吸血率（0~1）
   log?: string;
   // 未来可扩展：statusEffect, element 等
 }
@@ -168,6 +210,7 @@ export interface Gu {
   specialAtk: number;
   specialDef: number;
   mp: number;
+  maxMp?: number;
 
   // 战斗与历史追踪
   fights: number;

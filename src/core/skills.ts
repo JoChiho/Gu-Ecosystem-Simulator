@@ -22,7 +22,7 @@ export interface SkillResult {
   logs: string[];
 }
 
-/** MVP 示例技能定义（后续可从配置文件或数据库加载） */
+/** 技能定义（更多样性） */
 export const SKILL_DEFINITIONS: SkillDefinition[] = [
   {
     id: 'poison_burst',
@@ -40,7 +40,39 @@ export const SKILL_DEFINITIONS: SkillDefinition[] = [
     mpCost: 5,
     baseActivationChance: 0.25,
   },
-  // 更多技能在此添加...
+  // === 新增技能 ===
+  {
+    id: 'frenzy_rush',
+    name: '狂乱冲锋',
+    description: '短时间内大幅提升攻击，但消耗较多 MP。',
+    damageType: 'physical',
+    mpCost: 7,
+    baseActivationChance: 0.28,
+  },
+  {
+    id: 'draining_bite',
+    name: '汲血噬咬',
+    description: '特殊攻击并大量吸取生命。',
+    damageType: 'special',
+    mpCost: 10,
+    baseActivationChance: 0.30,
+  },
+  {
+    id: 'shadow_veil',
+    name: '影纱护体',
+    description: '暂时提升防御与反击几率。',
+    damageType: 'physical',
+    mpCost: 6,
+    baseActivationChance: 0.32,
+  },
+  {
+    id: 'wild_surge',
+    name: '狂野涌动',
+    description: '爆发高额伤害，伴随较大浮动。',
+    damageType: 'special',
+    mpCost: 9,
+    baseActivationChance: 0.22,
+  },
 ];
 
 export const SKILL_REGISTRY = Object.fromEntries(
@@ -75,13 +107,13 @@ export function tryActivateSkill(gu: Gu, context: CombatContext): SkillResult | 
 
   // 根据技能生成效果
   const effects: EffectResult[] = [];
-  const logs: string[] = [`蛊#${gu.id} 发动了技能【${skill.name}】！`];
+  const logs: string[] = [`蛊#${gu.id} 发动技能【${skill.name}】！`];
 
   if (skill.id === 'poison_burst') {
     effects.push({
       damageMult: 1.25,
       damageAdd: 4,
-      log: '毒爆造成额外伤害并附加剧毒',
+      log: `蛊#${gu.id} 发动【毒爆】！特殊攻击提升并附加剧毒伤害。`,
     });
   }
 
@@ -89,7 +121,39 @@ export function tryActivateSkill(gu: Gu, context: CombatContext): SkillResult | 
     effects.push({
       counterRateBonus: 0.35,
       damageMult: 0.6,
-      log: '反击连斩提升了反击能力',
+      log: `蛊#${gu.id} 发动【反击连斩】！反击率大幅上升并追加伤害。`,
+    });
+  }
+
+  if (skill.id === 'frenzy_rush') {
+    effects.push({
+      damageMult: 1.65,
+      log: `蛊#${gu.id} 发动【狂乱冲锋】！攻击力在短时间内大幅上升！`,
+    });
+  }
+
+  if (skill.id === 'draining_bite') {
+    effects.push({
+      damageMult: 1.1,
+      damageAdd: 6,
+      lifesteal: 0.38,
+      log: `蛊#${gu.id} 发动【汲血噬咬】！特殊攻击并大量吸取对方生命。`,
+    });
+  }
+
+  if (skill.id === 'shadow_veil') {
+    effects.push({
+      defenseRateBonus: 0.22,
+      counterRateBonus: 0.28,
+      log: `蛊#${gu.id} 发动【影纱护体】！暂时大幅提升防御与反击几率。`,
+    });
+  }
+
+  if (skill.id === 'wild_surge') {
+    effects.push({
+      damageMult: 1.65,
+      damageAdd: 9,
+      log: `蛊#${gu.id} 发动【狂野涌动】！爆发高额伤害（浮动极大）。`,
     });
   }
 

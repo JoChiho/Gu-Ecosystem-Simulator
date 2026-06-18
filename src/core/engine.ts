@@ -201,7 +201,7 @@ export class SimulationEngine {
     for (const gu of this.gus) {
       if (gu.hp <= 0 || gu.hp >= gu.maxHp) continue;
       if (gu.traits.some(t => t.id === 'regen') && this.tickCount % 10 === 0) {
-        gu.hp = Math.min(gu.maxHp, gu.hp + 10 + Math.floor(Math.random() * 10));
+        gu.hp = Math.min(gu.maxHp, gu.hp + 3 + Math.floor(Math.random() * 3));
       }
     }
   }

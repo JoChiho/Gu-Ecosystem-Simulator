@@ -2,14 +2,19 @@
  * 蛊实体逻辑（已更新初始化新追踪字段）
  */
 import type { Gu, Personality, Trait } from './types';
-import { GU_INIT, WORLD, LEVEL } from '../utils/constants';
+import { WORLD, LEVEL, GU_CREATION } from '../utils/constants';
 import { TRAIT_DEFINITIONS, pickRandomNewTrait, shouldGainExtraTraitOnLevelUp } from './traits';
 
 function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 function randomPersonality(): Personality {
-  const list: Personality[] = ['aggressive', 'cautious', 'opportunistic', 'balanced'];
+  // 所有已定义性格都会被随机到（编辑 types.ts + stats.ts 即可增加新性格）
+  const list: Personality[] = [
+    'aggressive', 'cautious', 'opportunistic', 'balanced',
+    'naive', 'ferocious', 'cunning',
+    'greedy', 'stoic', 'wild',
+  ];
   return list[randInt(0, list.length - 1)];
 }
 
@@ -57,18 +62,27 @@ export function acquireTrait(gu: Gu, defOrTrait: any) {
 }
 
 export function createRandomGu(id: number): Gu {
-  const atk = randInt(GU_INIT.ATK_MIN, GU_INIT.ATK_MAX);
-  const def = randInt(GU_INIT.DEF_MIN, GU_INIT.DEF_MAX);
-  const spd = randInt(GU_INIT.SPD_MIN, GU_INIT.SPD_MAX);
-  const maxHp = randInt(GU_INIT.HP_MIN, GU_INIT.HP_MAX);
+  // 使用“初始属性点总量”机制（编辑 src/config/balance.ts 中的 GU_CREATION 即可调整）
+  // 五个主属性（atk/def/sa/sd/spd）从总量池中随机分配，增加开局多样性
+  const coreTotal = randInt(GU_CREATION.coreStatTotalMin, GU_CREATION.coreStatTotalMax);
+  let atk = 0, def = 0, specialAtk = 0, specialDef = 0, spd = 0;
 
-  // 新基础属性：特攻、特防、MP
-  const specialAtk = randInt(Math.floor(GU_INIT.ATK_MIN * 0.6), Math.floor(GU_INIT.ATK_MAX * 1.1));
-  const specialDef = randInt(Math.floor(GU_INIT.DEF_MIN * 0.6), Math.floor(GU_INIT.DEF_MAX * 1.1));
-  const mp = randInt(120, 220);
+  const statKeys = ['atk', 'def', 'specialAtk', 'specialDef', 'spd'] as const;
+  for (let p = 0; p < coreTotal; p++) {
+    const key = statKeys[randInt(0, statKeys.length - 1)];
+    if (key === 'atk') atk += 1;
+    else if (key === 'def') def += 1;
+    else if (key === 'specialAtk') specialAtk += 1;
+    else if (key === 'specialDef') specialDef += 1;
+    else if (key === 'spd') spd += 1;
+  }
+
+  // HP 相对独立但有规模感（可进一步联动 coreTotal）
+  const maxHp = randInt(GU_CREATION.hpMin, GU_CREATION.hpMax);
+  const mp = randInt(GU_CREATION.mpMin, GU_CREATION.mpMax);
 
   const initialTraits: Trait[] = [];
-  const starterCount = randInt(0, 2);
+  const starterCount = randInt(GU_CREATION.starterTraitCountMin, GU_CREATION.starterTraitCountMax);
   for (let i = 0; i < starterCount; i++) {
     const def = TRAIT_DEFINITIONS[randInt(0, TRAIT_DEFINITIONS.length - 1)];
     initialTraits.push({ 
@@ -90,12 +104,11 @@ export function createRandomGu(id: number): Gu {
     personality: randomPersonality(),
     traits: initialTraits,
 
-    // 新基础属性
     specialAtk,
     specialDef,
     mp,
+    maxMp: mp,
 
-    // 追踪字段
     fights: 0,
     wins: 0,
     battleHistory: [],
@@ -137,9 +150,11 @@ export function tryLevelUp(gu: Gu): Trait[] {
     else if (key === 'spd') gu.spd += 1;
   }
 
-  // maxHp 和 mp 也获得成长（总值增加，*10 缩放后）
+  // maxHp 和 mp 也获得成长（总值增加）
   gu.maxHp += Math.floor(20 + gu.level * 4) + randInt(0, 20);
-  gu.mp = (gu.mp ?? 0) + randInt(10, 30);
+  const mpGain = randInt(2, 5);
+  gu.maxMp = (gu.maxMp ?? gu.mp ?? 0) + mpGain;
+  gu.mp = Math.min(gu.maxMp, (gu.mp ?? 0) + mpGain);
 
   const newTraits: Trait[] = [];
   const newTraitDef = pickRandomNewTrait(gu.traits);
@@ -161,33 +176,40 @@ export function tryLevelUp(gu: Gu): Trait[] {
 }
 
 export function computeNextPosition(gu: Gu, nearestFood: any, nearestOther: any, dt = 1) {
-  // 简化版移动（完整版可从之前历史复制完整 bias + 速度计算）
+  // 移动速度调优（解决1倍速下抖动过快、难以点击的问题）：
+  // - 降低基础随机力与牵引力
+  // - speedFactor 改成温和公式，适配当前 spd 量级（~80-200）
+  // - 更多平滑，视觉更稳
   const bias = { foodSeek: 0.6, socialAggro: 0.2, wander: 0.2 };
   if (gu.personality === 'aggressive') bias.socialAggro += 0.3;
 
-  let vx = (Math.random() - 0.5) * 2 * 2.8;
-  let vy = (Math.random() - 0.5) * 2 * 2.8;
+  let vx = (Math.random() - 0.5) * 2 * 1.05;
+  let vy = (Math.random() - 0.5) * 2 * 1.05;
 
   if (nearestFood) {
     const dx = nearestFood.x - gu.x;
     const dy = nearestFood.y - gu.y;
     const d = Math.hypot(dx, dy) || 1;
-    vx += (dx / d) * 3.5 * bias.foodSeek;
-    vy += (dy / d) * 3.5 * bias.foodSeek;
+    vx += (dx / d) * 1.35 * bias.foodSeek;
+    vy += (dy / d) * 1.35 * bias.foodSeek;
   }
   if (nearestOther && bias.socialAggro > 0.2) {
     const dx = nearestOther.x - gu.x;
     const dy = nearestOther.y - gu.y;
     const d = Math.hypot(dx, dy) || 1;
     const sign = gu.personality === 'aggressive' ? 1 : -0.6;
-    vx += (dx / d) * 2.5 * bias.socialAggro * sign;
-    vy += (dy / d) * 2.5 * bias.socialAggro * sign;
+    vx += (dx / d) * 1.0 * bias.socialAggro * sign;
+    vy += (dy / d) * 1.0 * bias.socialAggro * sign;
   }
 
-  const speedFactor = 1 + (gu.spd - 8) * 0.035;
-  vx *= speedFactor; vy *= speedFactor;
-  vx = vx * 0.82 + (Math.random() - 0.5) * 0.6;
-  vy = vy * 0.82 + (Math.random() - 0.5) * 0.6;
+  // 温和的速度缩放（以 spd ≈ 140 为 1.0x 基准）
+  const speedFactor = 0.65 + (gu.spd / 140) * 0.85;
+  vx *= speedFactor;
+  vy *= speedFactor;
+
+  // 加强平滑，减少随机抖动
+  vx = vx * 0.86 + (Math.random() - 0.5) * 0.35;
+  vy = vy * 0.86 + (Math.random() - 0.5) * 0.35;
 
   let nx = gu.x + vx * dt;
   let ny = gu.y + vy * dt;

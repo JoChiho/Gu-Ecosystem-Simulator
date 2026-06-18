@@ -7,16 +7,24 @@
 
 import type { Gu, Trait, TraitDefinition, CombatContext, EffectResult, TraitTrigger } from './types';
 
-/** 8 个初始特质（与计划一致） */
+/** 初始 + 新增特质（增加多样性） */
 export const TRAIT_DEFINITIONS: TraitDefinition[] = [
-  { id: 'sharp_claws', name: '利爪', type: 'offense', stackable: false, description: '攻击时造成额外伤害。' },
-  { id: 'poison_bite', name: '毒牙', type: 'offense', stackable: false, description: '攻击命中附加毒伤。' },
-  { id: 'berserk', name: '狂暴', type: 'offense', stackable: false, description: '低血时攻击力大幅提升。' },
-  { id: 'hard_shell', name: '硬壳', type: 'defense', stackable: true, description: '每层降低受到伤害。' },
-  { id: 'regen', name: '再生', type: 'defense', stackable: false, description: '非战斗时缓慢恢复生命。' },
-  { id: 'fast_metabolism', name: '快速代谢', type: 'utility', stackable: false, description: '吃食物获得更多经验。' },
-  { id: 'scavenger', name: '食腐', type: 'utility', stackable: false, description: '战斗后利用尸体获得额外收益。' },
-  { id: 'unstable', name: '不稳定', type: 'mutation', stackable: false, description: '升级时更高概率获得额外特质。' },
+  { id: 'sharp_claws', name: '利爪', type: 'offense', stackable: false, description: '攻击时造成额外伤害。', level: 1, acquisitions: 1 },
+  { id: 'poison_bite', name: '毒牙', type: 'offense', stackable: false, description: '攻击命中附加毒伤。', level: 1, acquisitions: 1 },
+  { id: 'berserk', name: '狂暴', type: 'offense', stackable: false, description: '低血时攻击力大幅提升。', level: 1, acquisitions: 1 },
+  { id: 'hard_shell', name: '硬壳', type: 'defense', stackable: true, description: '每层降低受到伤害。', level: 1, acquisitions: 1 },
+  { id: 'regen', name: '再生', type: 'defense', stackable: false, description: '非战斗时缓慢恢复生命。', level: 1, acquisitions: 1 },
+  { id: 'fast_metabolism', name: '快速代谢', type: 'utility', stackable: false, description: '吃食物获得更多经验。', level: 1, acquisitions: 1 },
+  { id: 'scavenger', name: '食腐', type: 'utility', stackable: false, description: '战斗后利用尸体获得额外收益。', level: 1, acquisitions: 1 },
+  { id: 'unstable', name: '不稳定', type: 'mutation', stackable: false, description: '升级时更高概率获得额外特质。', level: 1, acquisitions: 1 },
+
+  // === 新增多样性特质 ===
+  { id: 'lifesteal_fang', name: '吸血獠牙', type: 'offense', stackable: false, description: '攻击时吸取对方生命。', level: 1, acquisitions: 1 },
+  { id: 'iron_hide', name: '铁皮', type: 'defense', stackable: true, description: '显著提升物理减伤。', level: 1, acquisitions: 1 },
+  { id: 'lucky_charm', name: '幸运符', type: 'utility', stackable: false, description: '提升幸运，暴击与闪避更佳。', level: 1, acquisitions: 1 },
+  { id: 'quick_reflex', name: '迅捷反应', type: 'utility', stackable: false, description: '大幅提升先攻与速度。', level: 1, acquisitions: 1 },
+  { id: 'venom_sac', name: '毒囊', type: 'offense', stackable: true, description: '每次命中叠加更强毒伤。', level: 1, acquisitions: 1 },
+  { id: 'blood_pact', name: '血契', type: 'mutation', stackable: false, description: '击杀时恢复生命并略微强化自身。', level: 1, acquisitions: 1 },
 ];
 
 export const TRAIT_REGISTRY = Object.fromEntries(
@@ -70,7 +78,7 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
     case 'sharp_claws':
       if (trigger === 'on_attack') {
         const dmg = 2 + (lvl - 1) * 1.5; // 线性
-        return { damageAdd: dmg, log: `因为利爪Lv.${lvl}，所以蛊#${attacker.id}造成了额外伤害` };
+        return { damageAdd: dmg, log: `蛊#${attacker.id} 【利爪】额外伤害 +${dmg}` };
       }
       break;
 
@@ -78,14 +86,14 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
       if (trigger === 'on_attack') {
         const dot = 1 + (lvl - 1) * 0.6;
         defender.hp = Math.max(1, defender.hp - dot);
-        return { log: `因为毒牙Lv.${lvl}，所以蛊#${attacker.id}命中蛊#${defender.id}并附加${dot}毒伤` };
+        return { log: `蛊#${attacker.id} 【毒牙】对 蛊#${defender.id} 附加 ${dot} 毒伤` };
       }
       break;
 
     case 'berserk':
       if (trigger === 'pre_attack' && attacker.hp < attacker.maxHp * 0.3) {
         const boost = 0.5 * (1 - Math.exp(-0.35 * lvl)); // 对数增长
-        return { damageMult: boost, log: `因为狂暴Lv.${lvl}，所以蛊#${attacker.id}攻击力提升` };
+        return { damageMult: boost, log: `蛊#${attacker.id} 【狂暴】低血爆发，攻击提升` };
       }
       break;
 
@@ -93,7 +101,7 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
       if (trigger === 'on_hit') {
         // 对数式减伤，永不完全免疫。日志中使用当前上下文的被击中者（defender）
         const reduction = 1 - Math.pow(0.92, lvl);
-        return { defenseRateBonus: reduction, log: `因为硬壳Lv.${lvl}，所以被击中者抵挡了部分伤害` };
+        return { defenseRateBonus: reduction, log: `蛊#${defender.id} 【硬壳】减伤生效` };
       }
       break;
 
@@ -110,7 +118,52 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
       }
       break;
 
-    // scavenger, regen 等保持原有外部逻辑，未来可迁移到对应 trigger
+    // === 新特质实现 ===
+    case 'lifesteal_fang':
+      if (trigger === 'on_attack') {
+        const rate = 0.08 + (lvl - 1) * 0.03;
+        return { lifesteal: rate, log: `吸血獠牙Lv.${lvl} 提供吸血效果` };
+      }
+      break;
+
+    case 'iron_hide':
+      if (trigger === 'on_hit') {
+        const reduction = 0.08 * lvl;
+        return { defenseRateBonus: Math.min(0.45, reduction), log: `铁皮Lv.${lvl} 提供额外减伤` };
+      }
+      break;
+
+    case 'lucky_charm':
+      if (trigger === 'pre_attack') {
+        return { critChanceBonus: 0.04 + lvl * 0.015, log: `蛊#${attacker.id} 【幸运符】暴击率与幸运上升！` };
+      }
+      break;
+
+    case 'quick_reflex':
+      if (trigger === 'pre_attack') {
+        return { log: `蛊#${attacker.id} 【迅捷反应】先攻与速度提升！` };
+      }
+      break;
+
+    case 'venom_sac':
+      if (trigger === 'on_attack') {
+        const dot = 2 + lvl * 1.6;
+        defender.hp = Math.max(1, defender.hp - dot);
+        return { log: `毒囊Lv.${lvl} 造成额外 ${dot} 持续毒伤` };
+      }
+      break;
+
+    case 'blood_pact':
+      if (trigger === 'on_kill') {
+        const heal = Math.floor(28 + lvl * 11);
+        attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+        // 轻微永久强化
+        attacker.atk = Math.floor(attacker.atk * 1.015) + 1;
+        return { log: `血契Lv.${lvl} 击杀回复 ${heal} 并强化攻击` };
+      }
+      break;
+
+    // scavenger, regen 等保持原有外部逻辑
   }
   return null;
 }
@@ -136,9 +189,13 @@ export function applyCombatEffects(
 
 export function getFoodExpMultiplier(gu: Gu): number {
   const t = gu.traits.find(tt => tt.id === 'fast_metabolism');
-  if (!t) return 1.0;
-  const lvl = t.level || 1;
-  return 1.5 + (lvl - 1) * 0.2; // 线性或对数，这里线性简单
+  let mult = 1.0;
+  if (t) {
+    const lvl = t.level || 1;
+    mult = 1.5 + (lvl - 1) * 0.2;
+  }
+  if (hasTrait(gu, 'greedy') || gu.personality === 'greedy') mult *= 1.35;
+  return mult;
 }
 
 export function getMovementBias(gu: Gu, hasNearbyCorpse: boolean) {
@@ -146,6 +203,7 @@ export function getMovementBias(gu: Gu, hasNearbyCorpse: boolean) {
   const base = { foodSeek: 0.6, socialAggro: 0.2, wander: 0.2 };
   if (gu.personality === 'aggressive') base.socialAggro += 0.35;
   if (hasTrait(gu, 'scavenger') && hasNearbyCorpse) base.foodSeek += 0.15;
+  if (hasTrait(gu, 'greedy') || gu.personality === 'greedy') base.foodSeek += 0.22;
   const total = base.foodSeek + base.socialAggro + base.wander;
   return { foodSeek: base.foodSeek / total, socialAggro: base.socialAggro / total, wander: base.wander / total };
 }

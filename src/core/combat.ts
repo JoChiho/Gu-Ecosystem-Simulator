@@ -49,6 +49,8 @@ function applyEffectsToContext(effects: EffectResult[], context: CombatContext) 
     if (e.counterRateBonus != null) t.counterRateBonus = (t.counterRateBonus ?? 0) + e.counterRateBonus;
     if (e.critChanceBonus != null) t.critBonus = (t.critBonus ?? 0) + e.critChanceBonus;
     if (e.skillUsageRateBonus != null) t.skillUsageRateBonus = (t.skillUsageRateBonus ?? 0) + e.skillUsageRateBonus;
+    if (e.heal != null) t.heal = (t.heal ?? 0) + e.heal;
+    if (e.lifesteal != null) t.lifestealBonus = (t.lifestealBonus ?? 0) + e.lifesteal;
     if (e.log) context.logs.push(e.log);
   }
 }
@@ -100,7 +102,7 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
 
   // 特质触发特殊报告（在自动战斗中可见过程）
   if (hasTrait(attacker, 'unstable') && Math.random() < 0.25) {
-    roundLogs.push(`因为不稳定，所以蛊#${attacker.id}本次没有攻击！`);
+    roundLogs.push(`蛊#${attacker.id} 因【不稳定】本回合未能行动！`);
     return 0; // 本回合无伤害
   }
 
@@ -113,6 +115,7 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
       ctx.damageType = skillResult.skill.damageType;
     }
     attacker.mp = Math.max(0, (attacker.mp ?? 0) - skillResult.mpCost);
+    roundLogs.push(`蛊#${attacker.id} 消耗 MP ${skillResult.mpCost}（剩余 ${attacker.mp}）`);
   }
 
   // 2. 触发 pre_attack / on_attack 特质
@@ -126,8 +129,20 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   const damage = calculateDamage(ctx);
   defender.hp = Math.max(0, defender.hp - damage);
 
-  roundLogs.push(`蛊#${attacker.id} 攻击 蛊#${defender.id}，造成 ${damage} 点伤害`);
+  const dmgType = ctx.damageType === 'special' ? '特殊' : '物理';
+  roundLogs.push(`[回合${roundNumber}] 蛊#${attacker.id} → 蛊#${defender.id} ：${damage}点${dmgType}伤害`);
   roundLogs.push(...ctx.logs);
+
+  // 吸血（lifesteal）支持：特质/技能可通过 lifesteal 或 derived 提供
+  const derivedA = getDerivedStats(attacker, ctx);
+  const lsRate = (derivedA.lifestealRate ?? 0) + (ctx.tempModifiers.lifestealBonus ?? 0);
+  if (lsRate > 0 && damage > 0) {
+    const healed = Math.floor(damage * Math.min(0.6, lsRate));
+    if (healed > 0) {
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + healed);
+      roundLogs.push(`[回合${roundNumber}] 蛊#${attacker.id} 吸血 +${healed} HP`);
+    }
+  }
 
   // 4. 触发 on_hit（防御方）
   const hitCtx = buildContext(defender, attacker, roundNumber, ctx.damageType);
@@ -139,13 +154,28 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   if (defender.hp > 0 && Math.random() < derivedDef.counterRate) {
     const counterDamage = Math.max(COMBAT.MIN_DAMAGE, Math.floor(derivedDef.effectivePhysicalAtk * 0.55));
     attacker.hp = Math.max(0, attacker.hp - counterDamage);
-    roundLogs.push(`蛊#${defender.id} 发动反击，造成 ${counterDamage} 点伤害！`);
+    roundLogs.push(`[回合${roundNumber}] 蛊#${defender.id} 反击 → 蛊#${attacker.id} ：${counterDamage}点伤害`);
   }
 
   // 6. post_damage 触发
   const postEffects = getTraitEffects('post_damage', ctx);
   applyEffectsToContext(postEffects, ctx);
   roundLogs.push(...postEffects.filter(e => e.log).map(e => e.log!));
+
+  // 直接治疗（来自特质/技能的 heal 字段）
+  const tMods: any = ctx.tempModifiers || {};
+  if (tMods.heal && tMods.heal > 0) {
+    const h = Math.floor(tMods.heal);
+    attacker.hp = Math.min(attacker.maxHp, attacker.hp + h);
+    roundLogs.push(`[回合${roundNumber}] 蛊#${attacker.id} 效果恢复 +${h} HP`);
+  }
+
+  // 击杀触发（血契等）
+  if (defender.hp <= 0) {
+    const killEffects = getTraitEffects('on_kill', ctx);
+    applyEffectsToContext(killEffects, ctx);
+    roundLogs.push(...killEffects.filter(e => e.log).map(e => e.log!));
+  }
 
   return damage;
 }
@@ -154,7 +184,7 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
  * 核心战斗函数（已适配新系统）
  */
 export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
-  const logs: string[] = [`蛊#${guA.id} 与 蛊#${guB.id} 爆发战斗！`];
+  const logs: string[] = [`战斗开始：蛊#${guA.id} vs 蛊#${guB.id}（回合制长战）`];
 
   // 使用引用（BattleView 和 engine 期望直接修改）
   const a = guA;
@@ -197,7 +227,7 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
     const expGain = COMBAT.WIN_BASE_EXP + Math.floor((loser.level - winner.level) * 2);
     const finalExp = Math.floor(expGain * (1 + metaWinner.luck * 0.001));
     winner.exp += finalExp;
-    logs.push(`蛊#${winner.id} 获胜，获得 ${finalExp} 经验`);
+    logs.push(`蛊#${winner.id} 获胜！获得 ${finalExp} 经验 + 继承特质`);
 
     const inheritCount = Math.floor(
       Math.random() * (COMBAT.INHERIT_TRAITS_MAX - COMBAT.INHERIT_TRAITS_MIN + 1)
@@ -217,7 +247,7 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
       logs.push(`蛊#${winner.id} 继承了 ${inherited.map(t => t.name).join('、')}`);
     }
   } else {
-    logs.push(`战斗结束，蛊#${loser.id} 并未死亡，无继承触发。`);
+    logs.push(`战斗结束，双方均存活（达到回合上限或平局）。`);
   }
 
   return {

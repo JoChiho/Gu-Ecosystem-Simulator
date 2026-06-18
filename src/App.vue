@@ -2,14 +2,16 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { SimulationEngine } from './core/engine';
 import type { Gu } from './core/types';
+import { getPersonalityCN, getPersonalityDescription } from './core/types';
+import { TRAIT_DEFINITIONS } from './core/traits';
 import SimulationCanvas from './components/SimulationCanvas.vue';
 import BattleView from './components/BattleView.vue';
 import { resolveCombat, executeBattleRound } from './core/combat';   // 顶部导入，保证对战时可用
 import { acquireTrait, tryLevelUp } from './core/gu';
 import { getMetaStats, getDerivedStats } from './core/stats';
-import { COMBAT, FOOD } from './utils/constants';
+import { COMBAT, FOOD, INITIAL_GU_COUNT } from './utils/constants';
 
-const engine = new SimulationEngine(12);
+const engine = new SimulationEngine(INITIAL_GU_COUNT);
 const snapshot = ref(engine.getSnapshot());
 const isRunning = ref(true);
 const speedIndex = ref(1);
@@ -116,13 +118,13 @@ function performNextRound() {
   // 本步行动的个体经验（发起方更多，响应方也有 + 随机 → 个体化，不同步；*10 缩放后调整除数）
   const initDerived = initiator === battleGuA.value ? dA : dB;
   const respDerived = responder === battleGuA.value ? dA : dB;
-  const initExp = Math.max(1, Math.floor(initDerived.effectivePhysicalAtk / 80) + Math.floor(Math.random() * 2));
-  const respExp = Math.max(1, Math.floor(respDerived.effectivePhysicalDef / 100) + Math.floor(Math.random() * 2));
+  const initExp = Math.max(1, Math.floor(initDerived.effectivePhysicalAtk / 9) + Math.floor(Math.random() * 2));
+  const respExp = Math.max(1, Math.floor(respDerived.effectivePhysicalDef / 11) + Math.floor(Math.random() * 2));
   initiator.exp += initExp;
   if (!(currentOver && responder.hp <= 0)) {
     responder.exp += respExp;
   }
-  allStepLogs.push(`蛊#${initiator.id} 获得 ${initExp} 主动经验，蛊#${responder.id} 获得 ${respExp} 响应经验`);
+  allStepLogs.push(`[经验] 蛊#${initiator.id} +${initExp} (主动) ， 蛊#${responder.id} +${respExp} (响应)`);
 
   battleLogs.value = [...battleLogs.value, ...allStepLogs];
 
@@ -258,7 +260,7 @@ function handleJarClosed() {
 
 function resetSim() {
   // 如果当前有闭合的坛子，可以选择保留 yuan 继续新的一轮
-  engine.reset(12);
+  engine.reset(INITIAL_GU_COUNT);
   selectedId.value = null;
   battleMode.value = false;
   isRunning.value = true;
@@ -277,6 +279,12 @@ function changeSpeed(delta: number) {
 function onCanvasSelect(id: number | null) {
   selectedId.value = id;
 }
+
+function getTraitDesc(id: string): string {
+  const def = TRAIT_DEFINITIONS.find((t) => t.id === id);
+  return def ? def.description : '';
+}
+
 
 // 逃跑概率相关 UI 辅助已移除（逃跑机制已完全取消）
 
@@ -322,11 +330,16 @@ onUnmounted(() => {
         <div class="panel" v-if="selectedId != null">
           <h3>蛊 #{{ selectedId }}</h3>
           <div v-for="gu in snapshot.gus.filter(g => g.id === selectedId)" :key="gu.id">
-            <div>Lv.{{ gu.level }} ({{ gu.personality }})</div>
+            <div class="tooltip" :data-tooltip="getPersonalityDescription(gu.personality)">
+              Lv.{{ gu.level }} ({{ getPersonalityCN(gu.personality) }})
+            </div>
             <div>HP: {{ gu.hp }}/{{ gu.maxHp }}</div>
+            <div>MP: {{ gu.mp }}/{{ gu.maxMp || gu.mp || 0 }}</div>
             <div>战斗 {{ gu.fights || 0 }} 胜 {{ gu.wins || 0 }}</div>
             <div class="traits">
-              <span v-for="t in gu.traits" :key="t.id" class="trait-tag">{{ t.name }} Lv.{{ t.level || 1 }}</span>
+              <span v-for="t in gu.traits" :key="t.id" class="trait-tag tooltip" :data-tooltip="getTraitDesc(t.id)">
+                {{ t.name }} Lv.{{ t.level || 1 }}
+              </span>
             </div>
           </div>
         </div>

@@ -39,6 +39,14 @@ export function getMetaStats(gu: Gu): MetaStats {
   if (hasTrait(gu, 'unstable')) {
     mutationRate += 0.25; // 不稳定特质显著提升变异率
   }
+  if (hasTrait(gu, 'lucky_charm')) {
+    luck += 12;
+  }
+  if (hasTrait(gu, 'quick_reflex')) {
+    // 速度已在 personality 中，但这里额外加一点幸运与技能率
+    luck += 4;
+    skillUsageRate += 0.04;
+  }
 
   // 未来可在这里加入更多特质对 luck / skillUsageRate 的影响
   // 例如某个特质 "lucky_clover" 增加 luck
@@ -46,7 +54,21 @@ export function getMetaStats(gu: Gu): MetaStats {
   if (p === 'naive') {
     luck += 8;
     mutationRate += 0.03;
-    // skillUsageRate 已在 personality modifiers 里处理
+  }
+  if (p === 'ferocious' || p === 'wild') {
+    mutationRate += 0.02;
+    luck += 3;
+  }
+  if (p === 'cunning') {
+    skillUsageRate += 0.05;
+    luck += 5;
+  }
+  if (p === 'greedy') {
+    // 贪婪者更会找资源，但战斗 meta 一般
+  }
+  if (p === 'stoic') {
+    // 坚忍者稳健
+    luck += 2;
   }
 
   return {
@@ -70,57 +92,27 @@ function getPersonalityModifiers(p: Personality): {
   critChanceBonus: number;
 } {
   switch (p) {
-    case 'aggressive': // 直率 - 进攻强势
-      return {
-        atkMult: 1.25,
-        defMult: 0.88,
-        specialAtkMult: 1.18,
-        specialDefMult: 0.92,
-        spdMult: 1.08,
-        skillUsageRateBonus: 0.12,
-        critChanceBonus: 0.06,
-      };
-    case 'cautious': // 胆小 - 防御逃生型
-      return {
-        atkMult: 0.82,
-        defMult: 1.22,
-        specialAtkMult: 0.88,
-        specialDefMult: 1.15,
-        spdMult: 1.05,
-        skillUsageRateBonus: -0.04,
-        critChanceBonus: -0.02,
-      };
-    case 'opportunistic': // 机会主义 - 投机取巧
-      return {
-        atkMult: 1.1,
-        defMult: 0.95,
-        specialAtkMult: 1.12,
-        specialDefMult: 0.98,
-        spdMult: 1.12,
-        skillUsageRateBonus: 0.16,
-        critChanceBonus: 0.09,
-      };
-    case 'naive': // 天真
-      return {
-        atkMult: 0.95,
-        defMult: 1.05,
-        specialAtkMult: 1.12,
-        specialDefMult: 0.98,
-        spdMult: 0.95,
-        skillUsageRateBonus: 0.08,
-        critChanceBonus: 0.05,
-      };
+    case 'aggressive':
+      return { atkMult: 1.25, defMult: 0.88, specialAtkMult: 1.18, specialDefMult: 0.92, spdMult: 1.08, skillUsageRateBonus: 0.12, critChanceBonus: 0.06 };
+    case 'cautious':
+      return { atkMult: 0.82, defMult: 1.22, specialAtkMult: 0.88, specialDefMult: 1.15, spdMult: 1.05, skillUsageRateBonus: -0.04, critChanceBonus: -0.02 };
+    case 'opportunistic':
+      return { atkMult: 1.1, defMult: 0.95, specialAtkMult: 1.12, specialDefMult: 0.98, spdMult: 1.12, skillUsageRateBonus: 0.16, critChanceBonus: 0.09 };
+    case 'naive':
+      return { atkMult: 0.95, defMult: 1.05, specialAtkMult: 1.12, specialDefMult: 0.98, spdMult: 0.95, skillUsageRateBonus: 0.08, critChanceBonus: 0.05 };
+    case 'ferocious': // 凶残：暴力输出
+      return { atkMult: 1.38, defMult: 0.78, specialAtkMult: 1.22, specialDefMult: 0.85, spdMult: 1.05, skillUsageRateBonus: 0.05, critChanceBonus: 0.11 };
+    case 'cunning': // 狡猾：速度与技巧
+      return { atkMult: 1.02, defMult: 0.95, specialAtkMult: 1.08, specialDefMult: 1.0, spdMult: 1.28, skillUsageRateBonus: 0.18, critChanceBonus: 0.04 };
+    case 'greedy': // 贪婪：重资源，轻战斗
+      return { atkMult: 0.88, defMult: 0.95, specialAtkMult: 0.92, specialDefMult: 1.0, spdMult: 1.0, skillUsageRateBonus: 0.02, critChanceBonus: 0.01 };
+    case 'stoic': // 坚忍：肉盾
+      return { atkMult: 0.78, defMult: 1.38, specialAtkMult: 0.82, specialDefMult: 1.32, spdMult: 0.92, skillUsageRateBonus: -0.06, critChanceBonus: -0.03 };
+    case 'wild': // 狂野：高方差高速度
+      return { atkMult: 1.12, defMult: 0.85, specialAtkMult: 1.15, specialDefMult: 0.88, spdMult: 1.32, skillUsageRateBonus: 0.09, critChanceBonus: 0.08 };
     case 'balanced':
     default:
-      return {
-        atkMult: 1.06,
-        defMult: 1.06,
-        specialAtkMult: 1.06,
-        specialDefMult: 1.06,
-        spdMult: 1.06,
-        skillUsageRateBonus: 0.05,
-        critChanceBonus: 0.03,
-      };
+      return { atkMult: 1.06, defMult: 1.06, specialAtkMult: 1.06, specialDefMult: 1.06, spdMult: 1.06, skillUsageRateBonus: 0.05, critChanceBonus: 0.03 };
   }
 }
 
@@ -156,14 +148,15 @@ export function getDerivedStats(gu: Gu, context?: Partial<CombatContext>): Deriv
     meta.luck * 0.2;
 
   // === 概率类衍生属性 ===
-  const critChance = 0.05 + meta.luck * 0.004 + (temp.critBonus ?? 0) + mods.critChanceBonus;
-  const critDamageMult = 1.5 + meta.luck * 0.01;
+  // 调低暴击影响，避免数值膨胀后一击结束战斗
+  const critChance = 0.035 + meta.luck * 0.002 + (temp.critBonus ?? 0) + mods.critChanceBonus;
+  const critDamageMult = 1.32 + meta.luck * 0.006;
 
-  const damageVariance = 0.25 + meta.luck * 0.002;
+  const damageVariance = 0.22 + meta.luck * 0.0015;
 
-  // 防御率（分母 *10 保持与缩放后 def 数值匹配）
+  // 防御率（参考值根据当前初始总量调低，避免减伤接近0）
   const defenseRate =
-    Math.min(0.55, (base.def * mods.defMult / (base.def * mods.defMult + 600)) * 0.4 + (temp.defenseRateBonus ?? 0) + meta.luck * 0.001);
+    Math.min(0.55, (base.def * mods.defMult / (base.def * mods.defMult + 85)) * 0.4 + (temp.defenseRateBonus ?? 0) + meta.luck * 0.001);
 
   // 反击率
   const counterRate =

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Gu } from '../core/types';
+import { getPersonalityCN, getPersonalityDescription } from '../core/types';
+import { SKILL_DEFINITIONS } from '../core/skills';
+import { TRAIT_DEFINITIONS } from '../core/traits';
 
 const props = defineProps<{
   guA: Gu;
@@ -16,6 +19,19 @@ const emit = defineEmits<{
   (e: 'nextRound'): void;
   (e: 'cancel'): void;
 }>();
+
+// MP 最大值兜底
+function getMaxMp(gu: Gu): number {
+  return gu.maxMp || gu.mp || 20;
+}
+
+// 获取特质描述
+function getTraitDesc(id: string): string {
+  const def = TRAIT_DEFINITIONS.find((t) => t.id === id);
+  return def ? def.description : '未知特质效果';
+}
+
+const allSkills = SKILL_DEFINITIONS;
 </script>
 
 <template>
@@ -25,28 +41,64 @@ const emit = defineEmits<{
       <div class="vs-container">
         <!-- 左蛊 -->
         <div class="gu-card" :class="{ winner: result && result.winnerId === guA.id }">
-          <div class="name">蛊 #{{ guA.id }} <span class="pers">({{ guA.personality }})</span></div>
+          <div class="name" style="color: #5dade2;">蛊 #{{ guA.id }} 
+            <span class="pers tooltip" :data-tooltip="getPersonalityDescription(guA.personality)">
+              ({{ getPersonalityCN(guA.personality) }})
+            </span>
+          </div>
           <div class="hp-bar">
             <div class="hp-fill" :style="{ width: (guA.hp / guA.maxHp * 100) + '%' }"></div>
           </div>
-          <div class="stats">Lv.{{ guA.level }} | ATK {{ guA.atk }} DEF {{ guA.def }} SPD {{ guA.spd }}</div>
-          <div class="traits">
-            <span v-for="t in guA.traits" :key="t.id" class="trait">{{ t.name }} Lv.{{ t.level || 1 }}</span>
+          <div class="mp-bar">
+            <div class="mp-fill" :style="{ width: (guA.mp / getMaxMp(guA) * 100) + '%' }"></div>
           </div>
+          <div class="stats">Lv.{{ guA.level }} | ATK {{ guA.atk }} DEF {{ guA.def }} SPD {{ guA.spd }} | MP {{ guA.mp }}/{{ getMaxMp(guA) }}</div>
+          <div class="traits">
+            <span v-for="t in guA.traits" :key="t.id" class="trait tooltip" :data-tooltip="getTraitDesc(t.id)">
+              {{ t.name }} Lv.{{ t.level || 1 }}
+            </span>
+          </div>
+          <div class="skills">
+            <span v-for="s in allSkills" :key="s.id" 
+                  class="skill tooltip" 
+                  :class="{ affordable: (guA.mp || 0) >= s.mpCost }"
+                  :data-tooltip="s.description">
+              {{ s.name }}(MP{{ s.mpCost }})
+            </span>
+          </div>
+          <div class="skills-note">悬停技能/特质/性格查看详细描述</div>
         </div>
 
         <div class="vs">VS</div>
 
         <!-- 右蛊 -->
         <div class="gu-card" :class="{ winner: result && result.winnerId === guB.id }">
-          <div class="name">蛊 #{{ guB.id }} <span class="pers">({{ guB.personality }})</span></div>
+          <div class="name" style="color: #e67e22;">蛊 #{{ guB.id }} 
+            <span class="pers tooltip" :data-tooltip="getPersonalityDescription(guB.personality)">
+              ({{ getPersonalityCN(guB.personality) }})
+            </span>
+          </div>
           <div class="hp-bar">
             <div class="hp-fill" :style="{ width: (guB.hp / guB.maxHp * 100) + '%' }"></div>
           </div>
-          <div class="stats">Lv.{{ guB.level }} | ATK {{ guB.atk }} DEF {{ guB.def }} SPD {{ guB.spd }}</div>
-          <div class="traits">
-            <span v-for="t in guB.traits" :key="t.id" class="trait">{{ t.name }} Lv.{{ t.level || 1 }}</span>
+          <div class="mp-bar">
+            <div class="mp-fill" :style="{ width: (guB.mp / getMaxMp(guB) * 100) + '%' }"></div>
           </div>
+          <div class="stats">Lv.{{ guB.level }} | ATK {{ guB.atk }} DEF {{ guB.def }} SPD {{ guB.spd }} | MP {{ guB.mp }}/{{ getMaxMp(guB) }}</div>
+          <div class="traits">
+            <span v-for="t in guB.traits" :key="t.id" class="trait tooltip" :data-tooltip="getTraitDesc(t.id)">
+              {{ t.name }} Lv.{{ t.level || 1 }}
+            </span>
+          </div>
+          <div class="skills">
+            <span v-for="s in allSkills" :key="s.id" 
+                  class="skill tooltip" 
+                  :class="{ affordable: (guB.mp || 0) >= s.mpCost }"
+                  :data-tooltip="s.description">
+              {{ s.name }}(MP{{ s.mpCost }})
+            </span>
+          </div>
+          <div class="skills-note">悬停技能/特质/性格查看详细描述</div>
         </div>
       </div>
 
@@ -58,7 +110,7 @@ const emit = defineEmits<{
 
       <!-- 结果摘要 -->
       <div v-if="result" class="result-summary">
-        <strong v-if="result.winnerId">胜利者：蛊 #{{ result.winnerId }}</strong>
+        <strong v-if="result.winnerId" :style="{ color: result.winnerId === guA.id ? '#5dade2' : '#e67e22' }">胜利者：蛊 #{{ result.winnerId }}</strong>
         <strong v-else>平局</strong>
         <div v-if="result.inherited.length">继承特质：{{ result.inherited.join('、') }}</div>
       </div>
@@ -108,9 +160,34 @@ const emit = defineEmits<{
 .pers { font-size: 12px; color: #888; }
 .hp-bar { height: 10px; background: #333; border-radius: 4px; overflow: hidden; margin: 4px 0; }
 .hp-fill { height: 100%; background: #e74c3c; transition: width .2s; }
+.mp-bar { height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin: 2px 0; }
+.mp-fill { height: 100%; background: #3498db; transition: width .2s; }
 .stats { font-family: monospace; font-size: 12px; color: #aaa; }
 .traits { margin-top: 6px; }
 .trait { display: inline-block; font-size: 11px; background: #2c2c2c; padding: 1px 5px; border-radius: 3px; margin-right: 4px; }
+.skills-note { font-size: 10px; color: #888; margin-top: 2px; }
+
+.skills {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.skill {
+  display: inline-block;
+  font-size: 10px;
+  background: #1f3a5f;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: help;
+  border: 1px solid #3a6aa8;
+}
+.skill.affordable {
+  background: #2e5a2e;
+  border-color: #4a8a4a;
+}
+
+/* tooltip styles are in global style.css */
 
 .battle-log {
   background: #0a0a0a;

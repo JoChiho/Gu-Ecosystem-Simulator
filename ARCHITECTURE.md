@@ -99,6 +99,8 @@ gu-ecosystem-simulator/
 - **特质效果**：`src/core/traits.ts` → `getTraitEffects(trigger: TraitTrigger, context)`（模块化 per-trigger）。
 - **技能系统**：`src/core/skills.ts` → `tryActivateSkill` + 效果注册（与特质平行，通过 skillUsageRate 控制发动）。
 - **升级与变异**：`src/core/gu.ts` 的 `tryLevelUp()` 使用 mutationRate + stats 成长新基础属性。
+- **可调参数**：**单一推荐编辑文件 `src/config/balance.ts`**（JAR 初始数量、GU_CREATION 初始属性点总量 + 分配逻辑、成长、战斗、食物等全部集中）。`src/utils/constants.ts` 仅做兼容 re-export。
+- 新增内容（v2 多样性更新）：约 6 个新特质（吸血獠牙、铁皮、幸运符、迅捷反应、毒囊、血契）、4 个新技能（狂乱冲锋、汲血噬咬、影纱护体、狂野涌动）、3 个新性格（贪婪、坚忍、狂野）+ 完整实现旧的凶残/狡猾。战斗现在支持 lifesteal/heal/on_kill 管道。
 - 计算调用链：engine → combat → (stats + traits + skills)。所有公式集中在 combat.ts。
 
 ### 3.3 战斗解析器

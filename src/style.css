@@ -64,3 +64,52 @@ canvas {
   border-radius: 4px;
   image-rendering: pixelated;
 }
+
+/* Global tooltip for hover descriptions (traits, personality, skills) */
+.tooltip {
+  position: relative;
+  cursor: help;
+}
+.tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 120%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #222;
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: pre-line;
+  max-width: 240px;
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  pointer-events: none;
+  text-align: left;
+  line-height: 1.3;
+}
+.tooltip:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+.tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: 115%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #222;
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s;
+}
+.tooltip:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
