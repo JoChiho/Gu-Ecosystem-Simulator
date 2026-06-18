@@ -3,7 +3,8 @@
  * 只负责根据快照绘制，不包含任何游戏规则。
  */
 
-import type { JarState, Gu, Food } from '../core/types';
+import type { JarState, Gu } from '../core/types';
+import { getGuRadius } from '../core/gu';
 
 export interface RenderOptions {
   selectedGuId?: number | null;
@@ -18,10 +19,9 @@ const PERSONALITY_COLOR: Record<string, string> = {
 };
 
 function getGuColor(gu: Gu): string {
-  // 优先按性格，其次按等级轻微变化
+  // 优先按性格
   const base = PERSONALITY_COLOR[gu.personality] || '#9b59b6';
-  const levelTint = Math.min(gu.level - 1, 6) * 8;
-  return base; // 简化：直接用性格色，后续可做 hsl 调整
+  return base;
 }
 
 export class CanvasRenderer {
@@ -29,19 +29,19 @@ export class CanvasRenderer {
   private width: number;
   private height: number;
 
-  constructor(private canvas: HTMLCanvasElement, logicalWidth: number, logicalHeight: number) {
-    const ctx = canvas.getContext('2d', { alpha: true });
+  constructor(_canvas: HTMLCanvasElement, logicalWidth: number, logicalHeight: number) {
+    const ctx = _canvas.getContext('2d', { alpha: true });
     if (!ctx) throw new Error('无法获取 2D context');
     this.ctx = ctx;
     this.width = logicalWidth;
     this.height = logicalHeight;
 
     // 高 DPR 支持（简单版）
+    // logicalWidth/Height 是世界坐标系尺寸（由 WORLD 决定），显示缩放由上层 SimulationCanvas 的 CSS style 控制
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = logicalWidth * dpr;
-    canvas.height = logicalHeight * dpr;
-    canvas.style.width = `${logicalWidth}px`;
-    canvas.style.height = `${logicalHeight}px`;
+    _canvas.width = logicalWidth * dpr;
+    _canvas.height = logicalHeight * dpr;
+    // 不要在此硬设 style.width/height，交由组件根据世界大小计算拟合显示尺寸后设置
     this.ctx.scale(dpr, dpr);
   }
 
@@ -67,7 +67,7 @@ export class CanvasRenderer {
 
     // 绘制蛊
     for (const gu of state.gus) {
-      const r = 8 + Math.min(gu.level, 7) * 1.1;
+      const r = getGuRadius(gu);
       const color = getGuColor(gu);
 
       // 主体
@@ -134,8 +134,9 @@ export class CanvasRenderer {
       const dx = gu.x - canvasX;
       const dy = gu.y - canvasY;
       const d = dx * dx + dy * dy;
-      const r = 10 + Math.min(gu.level, 7) * 1.1;
-      if (d < r * r * 1.6) {
+      // 点击命中判定使用实际物理半径 + 一定宽容
+      const r = getGuRadius(gu);
+      if (d < r * r * 1.7) {
         if (!closest || d < closest.dist) {
           closest = { id: gu.id, dist: d };
         }

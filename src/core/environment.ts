@@ -4,7 +4,8 @@
  */
 
 import type { Food, Gu, EnvironmentEvent, EnvironmentEventType } from './types';
-import { WORLD, FOOD, EVENT } from '../utils/constants';
+import { WORLD, EVENT } from '../utils/constants';
+import { getGuEatRadius } from './gu';
 
 /** 生成一个随机位置的食物（考虑边界） */
 export function spawnFood(): Food {
@@ -22,7 +23,9 @@ export function checkAndEatFood(gus: Gu[], foods: Food[]): Food[] {
       const f = foods[i];
       const dx = gu.x - f.x;
       const dy = gu.y - f.y;
-      if (dx * dx + dy * dy < FOOD.EAT_RADIUS * FOOD.EAT_RADIUS) {
+      // 按单个蛊的等级动态半径（等级越高吃食范围/效率越大）
+      const eatR = getGuEatRadius(gu);
+      if (dx * dx + dy * dy < eatR * eatR) {
         eaten.push(foods[i]);
         foods.splice(i, 1);
       }

@@ -2,9 +2,9 @@
  * 蛊生态模拟器 - 模拟主循环（已更新支持专用对战UI + 最后幸存者晋升 + 重要事件过滤）
  */
 
-import type { Gu, Food, EnvironmentEvent, BattleRecord } from './types';
-import { INITIAL_GU_COUNT, FOOD } from '../utils/constants';
-import { createRandomGu, computeNextPosition, gainExp, tryLevelUp, expToNextLevel } from './gu';
+import type { Gu, Food, BattleRecord } from './types';
+import { INITIAL_GU_COUNT, FOOD, SIZE } from '../utils/constants';
+import { createRandomGu, computeNextPosition, gainExp, tryLevelUp, getGuRadius } from './gu';
 import { resolveCombat } from './combat';
 import { checkAndEatFood, rollAndApplyEvents, spawnFood } from './environment';
 import { getFoodExpMultiplier } from './traits';
@@ -25,7 +25,6 @@ export class SimulationEngine {
   closedReason: string | null = null;
 
   private nextGuId = 1;
-  private recentEnvEvents: EnvironmentEvent[] = [];
 
   constructor(initialCount = INITIAL_GU_COUNT) {
     this.reset(initialCount);
@@ -39,7 +38,6 @@ export class SimulationEngine {
     this.pendingBattle = null;
     this.isClosed = false;
     this.closedReason = null;
-    this.recentEnvEvents = [];
     this.nextGuId = 1;
 
     for (let i = 0; i < initialCount; i++) {
@@ -111,7 +109,7 @@ export class SimulationEngine {
   }
 
   /** 由 UI 在战斗结束后调用，清理战场并记录重要结果 */
-  finalizeCombat(winner: Gu, loser: Gu, combatLogs: string[], inheritedNames: string[]): void {
+  finalizeCombat(winner: Gu, loser: Gu, _combatLogs: string[], inheritedNames: string[]): void {
     // 记录战斗历史到双方
     const recordForWinner: BattleRecord = { vsId: loser.id, won: true, inherited: inheritedNames };
     const recordForLoser: BattleRecord = { vsId: winner.id, won: false, inherited: [] };
@@ -159,7 +157,10 @@ export class SimulationEngine {
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const distSq = dx * dx + dy * dy;
-        const r = 11 + Math.min(a.level, 6) * 0.6;
+        // 等级越高体型越大，战斗碰撞半径按两者半径之和计算 → 高等级更易遭遇战斗
+        const ra = getGuRadius(a);
+        const rb = getGuRadius(b);
+        const r = (ra + rb) * SIZE.BATTLE_SUM_FACTOR;
 
         if (distSq < r * r) {
           // 发现战斗！暂停推进，交给 UI
@@ -207,7 +208,6 @@ export class SimulationEngine {
   }
 
   private moveAll(): void {
-    const hasCorpse = this.gus.some(g => g.hp <= 0);
     for (const gu of this.gus) {
       if (gu.hp <= 0) continue;
 

@@ -217,6 +217,9 @@ export interface Gu {
   wins: number;
   battleHistory: BattleRecord[];
   notableEvents: string[];
+
+  // 技能（每只蛊最多 4 个，通过升级获得，技能也有等级）
+  skills?: Array<{ id: string; level: number }>;
 }
 
 export interface Food {

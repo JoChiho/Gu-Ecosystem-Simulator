@@ -25,6 +25,13 @@ export const TRAIT_DEFINITIONS: TraitDefinition[] = [
   { id: 'quick_reflex', name: '迅捷反应', type: 'utility', stackable: false, description: '大幅提升先攻与速度。', level: 1, acquisitions: 1 },
   { id: 'venom_sac', name: '毒囊', type: 'offense', stackable: true, description: '每次命中叠加更强毒伤。', level: 1, acquisitions: 1 },
   { id: 'blood_pact', name: '血契', type: 'mutation', stackable: false, description: '击杀时恢复生命并略微强化自身。', level: 1, acquisitions: 1 },
+
+  // 更多新特质 - 平衡设计，有优势也有权衡
+  { id: 'eagle_eye', name: '鹰眼', type: 'utility', stackable: false, description: '大幅提升暴击率和先攻优势。', level: 1, acquisitions: 1 },
+  { id: 'mana_well', name: '法力之井', type: 'utility', stackable: false, description: '提升技能发动率，战斗中缓慢恢复MP（正面优势）。', level: 1, acquisitions: 1 },
+  { id: 'thorns', name: '荆棘护体', type: 'defense', stackable: true, description: '反弹伤害（巨大优势），但会让自身略微受伤（权衡）。', level: 1, acquisitions: 1 },
+  { id: 'soul_link', name: '灵魂链接', type: 'mutation', stackable: false, description: '击杀获得额外恢复和强化（优势），但有小概率技能暂时失效（权衡）。', level: 1, acquisitions: 1 },
+  { id: 'glass_cannon', name: '玻璃大炮', type: 'offense', stackable: false, description: '攻击力极高（正面优势），但防御大幅降低（权衡）。', level: 1, acquisitions: 1 },
 ];
 
 export const TRAIT_REGISTRY = Object.fromEntries(
@@ -77,15 +84,17 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
   switch (trait.id) {
     case 'sharp_claws':
       if (trigger === 'on_attack') {
-        const dmg = 2 + (lvl - 1) * 1.5; // 线性
+        const baseDmg = Math.floor(attacker.atk * 0.04 + 5);
+        const dmg = Math.floor(baseDmg + (lvl - 1) * 3);
         return { damageAdd: dmg, log: `蛊#${attacker.id} 【利爪】额外伤害 +${dmg}` };
       }
       break;
 
     case 'poison_bite':
       if (trigger === 'on_attack') {
-        const dot = 1 + (lvl - 1) * 0.6;
-        defender.hp = Math.max(1, defender.hp - dot);
+        const baseDot = Math.floor(attacker.atk * 0.04 + 5);
+        const dot = Math.floor(baseDot + (lvl - 1) * 3);
+        defender.hp = Math.max(1, Math.floor(defender.hp - dot));
         return { log: `蛊#${attacker.id} 【毒牙】对 蛊#${defender.id} 附加 ${dot} 毒伤` };
       }
       break;
@@ -147,19 +156,67 @@ function applyTraitTrigger(trait: Trait, trigger: TraitTrigger, context: CombatC
 
     case 'venom_sac':
       if (trigger === 'on_attack') {
-        const dot = 2 + lvl * 1.6;
-        defender.hp = Math.max(1, defender.hp - dot);
+        const baseDot = Math.floor(attacker.atk * 0.05 + 8);
+        const dot = Math.floor(baseDot + lvl * 4);
+        defender.hp = Math.max(1, Math.floor(defender.hp - dot));
         return { log: `毒囊Lv.${lvl} 造成额外 ${dot} 持续毒伤` };
       }
       break;
 
     case 'blood_pact':
       if (trigger === 'on_kill') {
-        const heal = Math.floor(28 + lvl * 11);
+        const heal = Math.floor(35 + lvl * 12);
         attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
         // 轻微永久强化
         attacker.atk = Math.floor(attacker.atk * 1.015) + 1;
         return { log: `血契Lv.${lvl} 击杀回复 ${heal} 并强化攻击` };
+      }
+      break;
+
+    // === 新增特质 ===
+    case 'eagle_eye':
+      if (trigger === 'pre_attack') {
+        return { critChanceBonus: 0.03 + lvl * 0.02, log: `蛊#${attacker.id} 【鹰眼】暴击与先攻大幅提升！` };
+      }
+      break;
+
+    case 'mana_well':
+      if (trigger === 'pre_attack') {
+        const mpRestore = 2 + Math.floor(lvl / 2);
+        attacker.mp = Math.min(attacker.maxMp || 30, (attacker.mp || 0) + mpRestore);
+        return { skillUsageRateBonus: 0.08 + lvl * 0.04, log: `蛊#${attacker.id} 【法力之井】MP恢复并技能率上升！` };
+      }
+      break;
+
+    case 'thorns':
+      if (trigger === 'on_hit') {
+        const baseReflect = Math.floor(attacker.atk * 0.04 + 8);  // use the hit one's atk? or original
+        const reflect = Math.floor(baseReflect + lvl * 3);
+        defender.hp = Math.max(1, Math.floor(defender.hp - reflect)); // 反弹给攻击者（defender 在此上下文是攻击者）
+        attacker.hp = Math.max(1, Math.floor(attacker.hp - Math.floor(3 + lvl * 0.5))); // 小幅自身受伤（权衡）
+        return { defenseRateBonus: 0.05 * lvl, log: `蛊#${attacker.id} 【荆棘护体】反弹 ${reflect} 伤害！` };
+      }
+      break;
+
+    case 'soul_link':
+      if (trigger === 'on_kill') {
+        const heal = 12 + lvl * 6;
+        attacker.hp = Math.min(attacker.maxHp, attacker.hp + heal);
+        // 小概率负面（权衡）：临时降低技能率（通过日志体现，实际简单处理）
+        if (Math.random() < 0.2) {
+          return { skillUsageRateBonus: -0.1, log: `灵魂链接回复 ${heal} 但本回合技能率略降（权衡）` };
+        }
+        return { log: `灵魂链接击杀回复 ${heal} 并强化` };
+      }
+      break;
+
+    case 'glass_cannon':
+      if (trigger === 'pre_attack') {
+        return { damageMult: 1.3 + lvl * 0.15, log: `蛊#${attacker.id} 【玻璃大炮】攻击力极高爆发！` };
+      }
+      if (trigger === 'on_hit') {
+        // 负面：防御脆弱（权衡高攻优势）
+        return { defenseRateBonus: -0.05 * lvl, log: `玻璃大炮防御脆弱` };
       }
       break;
 
@@ -213,7 +270,28 @@ export function shouldGainExtraTraitOnLevelUp(gu: Gu): boolean {
 }
 
 export function pickRandomNewTrait(currentTraits: Trait[]): TraitDefinition | null {
-  // 特质名称唯一，但重复获得用于进化，所以始终从所有定义中随机
   if (TRAIT_DEFINITIONS.length === 0) return null;
+
+  const ownedIds = currentTraits.map(t => t.id);
+  const distinctCount = ownedIds.length; // 数组长度即独特数量，因为 acquire 会合并同 id
+  const MAX_TRAITS = 6;
+
+  // 优先选择自己已有的特质（进化）
+  const preferOwn = ownedIds.length > 0 && Math.random() < 0.75;
+
+  if (preferOwn) {
+    const pickId = ownedIds[Math.floor(Math.random() * ownedIds.length)];
+    const def = TRAIT_DEFINITIONS.find(d => d.id === pickId);
+    if (def) return def;
+  }
+
+  // 如果已达上限，只能进化已有
+  if (distinctCount >= MAX_TRAITS) {
+    if (ownedIds.length === 0) return null;
+    const pickId = ownedIds[Math.floor(Math.random() * ownedIds.length)];
+    return TRAIT_DEFINITIONS.find(d => d.id === pickId)!;
+  }
+
+  // 否则从全部随机（可获得新特质）
   return TRAIT_DEFINITIONS[Math.floor(Math.random() * TRAIT_DEFINITIONS.length)];
 }

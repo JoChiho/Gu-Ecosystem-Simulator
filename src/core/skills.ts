@@ -12,7 +12,7 @@
  */
 
 import type { Gu, CombatContext, EffectResult, SkillDefinition } from './types';
-import { getMetaStats, getDerivedStats } from './stats';
+import { getMetaStats } from './stats';
 
 export interface SkillResult {
   activated: boolean;
@@ -73,6 +73,39 @@ export const SKILL_DEFINITIONS: SkillDefinition[] = [
     mpCost: 9,
     baseActivationChance: 0.22,
   },
+  // === 新增技能（平衡设计） ===
+  {
+    id: 'vitality_surge',
+    name: '活力涌动',
+    description: '恢复生命并造成少量伤害（正面恢复优势）。',
+    damageType: 'special',
+    mpCost: 8,
+    baseActivationChance: 0.30,
+  },
+  {
+    id: 'eagle_strike',
+    name: '鹰隼一击',
+    description: '高暴击精准攻击（正面输出优势）。',
+    damageType: 'physical',
+    mpCost: 6,
+    baseActivationChance: 0.25,
+  },
+  {
+    id: 'mana_shield',
+    name: '法力护盾',
+    description: '提升防御和反击（正面生存优势）。',
+    damageType: 'physical',
+    mpCost: 5,
+    baseActivationChance: 0.32,
+  },
+  {
+    id: 'berserk_frenzy',
+    name: '狂暴乱舞',
+    description: '极高爆发伤害，但会造成自身反噬（巨大正面爆发 + 权衡）。',
+    damageType: 'physical',
+    mpCost: 12,
+    baseActivationChance: 0.20,
+  },
 ];
 
 export const SKILL_REGISTRY = Object.fromEntries(
@@ -82,7 +115,6 @@ export const SKILL_REGISTRY = Object.fromEntries(
 /** 尝试发动技能（在 combat 对应时机调用） */
 export function tryActivateSkill(gu: Gu, context: CombatContext): SkillResult | null {
   const meta = getMetaStats(gu);
-  const derived = getDerivedStats(gu, context);
 
   // 基础发动概率 + 元属性调制
   const activationChance = Math.min(
@@ -96,8 +128,11 @@ export function tryActivateSkill(gu: Gu, context: CombatContext): SkillResult | 
     return null;
   }
 
-  // 简单随机选一个技能（未来可根据蛊当前状态、性格、已学技能筛选）
-  const availableSkills = SKILL_DEFINITIONS.filter(s => (gu.mp ?? 0) >= s.mpCost);
+  // 只使用该蛊已拥有的技能（上限4个，通过升级获得）
+  const owned = (gu.skills || []).map(s => s.id);
+  const availableSkills = SKILL_DEFINITIONS.filter(s => 
+    owned.includes(s.id) && (gu.mp ?? 0) >= s.mpCost
+  );
   if (availableSkills.length === 0) return null;
 
   const skill = availableSkills[Math.floor(Math.random() * availableSkills.length)];
@@ -107,54 +142,113 @@ export function tryActivateSkill(gu: Gu, context: CombatContext): SkillResult | 
 
   // 根据技能生成效果
   const effects: EffectResult[] = [];
-  const logs: string[] = [`蛊#${gu.id} 发动技能【${skill.name}】！`];
+  const skillInst = (gu.skills || []).find((s: any) => s.id === skill.id);
+  const skillLevel = skillInst ? (skillInst.level || 1) : 1;
+  const logs: string[] = [`蛊#${gu.id} 发动技能【${skill.name}】 Lv.${skillLevel} ！`];
+
+  // 技能效果随等级提升而增强（数值变化）
+  const lvl = skillLevel;
 
   if (skill.id === 'poison_burst') {
+    const mult = 1.15 + (lvl - 1) * 0.06;
+    const add = 10 + lvl * 4;
     effects.push({
-      damageMult: 1.25,
-      damageAdd: 4,
-      log: `蛊#${gu.id} 发动【毒爆】！特殊攻击提升并附加剧毒伤害。`,
+      damageMult: mult,
+      damageAdd: add,
+      log: `蛊#${gu.id} 发动【毒爆】Lv.${lvl}！特殊攻击提升并附加剧毒伤害。`,
     });
   }
 
   if (skill.id === 'counter_strike') {
+    const counterB = 0.3 + (lvl - 1) * 0.05;
+    const mult = 0.5 + (lvl - 1) * 0.05;
     effects.push({
-      counterRateBonus: 0.35,
-      damageMult: 0.6,
-      log: `蛊#${gu.id} 发动【反击连斩】！反击率大幅上升并追加伤害。`,
+      counterRateBonus: counterB,
+      damageMult: mult,
+      log: `蛊#${gu.id} 发动【反击连斩】Lv.${lvl}！反击率大幅上升并追加伤害。`,
     });
   }
 
   if (skill.id === 'frenzy_rush') {
+    const mult = 1.5 + (lvl - 1) * 0.12;
     effects.push({
-      damageMult: 1.65,
-      log: `蛊#${gu.id} 发动【狂乱冲锋】！攻击力在短时间内大幅上升！`,
+      damageMult: mult,
+      log: `蛊#${gu.id} 发动【狂乱冲锋】Lv.${lvl}！攻击力在短时间内大幅上升！`,
     });
   }
 
   if (skill.id === 'draining_bite') {
+    const mult = 1.05 + (lvl - 1) * 0.06;
+    const add = 8 + lvl * 4;
+    const ls = 0.3 + (lvl - 1) * 0.04;
     effects.push({
-      damageMult: 1.1,
-      damageAdd: 6,
-      lifesteal: 0.38,
-      log: `蛊#${gu.id} 发动【汲血噬咬】！特殊攻击并大量吸取对方生命。`,
+      damageMult: mult,
+      damageAdd: add,
+      lifesteal: ls,
+      log: `蛊#${gu.id} 发动【汲血噬咬】Lv.${lvl}！特殊攻击并大量吸取对方生命。`,
     });
   }
 
   if (skill.id === 'shadow_veil') {
+    const defB = 0.18 + (lvl - 1) * 0.04;
+    const counterB = 0.2 + (lvl - 1) * 0.04;
     effects.push({
-      defenseRateBonus: 0.22,
-      counterRateBonus: 0.28,
-      log: `蛊#${gu.id} 发动【影纱护体】！暂时大幅提升防御与反击几率。`,
+      defenseRateBonus: defB,
+      counterRateBonus: counterB,
+      log: `蛊#${gu.id} 发动【影纱护体】Lv.${lvl}！暂时大幅提升防御与反击几率。`,
     });
   }
 
   if (skill.id === 'wild_surge') {
+    const mult = 1.5 + (lvl - 1) * 0.1;
+    const add = 10 + lvl * 5;
     effects.push({
-      damageMult: 1.65,
-      damageAdd: 9,
-      log: `蛊#${gu.id} 发动【狂野涌动】！爆发高额伤害（浮动极大）。`,
+      damageMult: mult,
+      damageAdd: add,
+      log: `蛊#${gu.id} 发动【狂野涌动】Lv.${lvl}！爆发高额伤害（浮动极大）。`,
     });
+  }
+
+  // === 新技能效果 ===
+  if (skill.id === 'vitality_surge') {
+    const healAmt = 25 + lvl * 8;
+    const dmgM = 0.7 + (lvl - 1) * 0.05;
+    effects.push({
+      heal: healAmt,
+      damageMult: dmgM,
+      log: `蛊#${gu.id} 发动【活力涌动】Lv.${lvl}！恢复 ${healAmt} 生命并攻击。`,
+    });
+  }
+
+  if (skill.id === 'eagle_strike') {
+    const critB = 0.08 + (lvl - 1) * 0.04;
+    const add = 10 + lvl * 4;
+    effects.push({
+      critChanceBonus: critB,
+      damageAdd: add,
+      log: `蛊#${gu.id} 发动【鹰隼一击】Lv.${lvl}！高暴击精准攻击！`,
+    });
+  }
+
+  if (skill.id === 'mana_shield') {
+    const defB = 0.12 + (lvl - 1) * 0.04;
+    const counterB = 0.15 + (lvl - 1) * 0.03;
+    effects.push({
+      defenseRateBonus: defB,
+      counterRateBonus: counterB,
+      log: `蛊#${gu.id} 发动【法力护盾】Lv.${lvl}！强化防御与反击。`,
+    });
+  }
+
+  if (skill.id === 'berserk_frenzy') {
+    const mult = 1.7 + (lvl - 1) * 0.15;
+    effects.push({
+      damageMult: mult,
+      log: `蛊#${gu.id} 发动【狂暴乱舞】Lv.${lvl}！极高爆发伤害！`,
+    });
+    // 负面反噬（但有巨大正面爆发优势）
+    const recoil = 15 + lvl * 3;
+    gu.hp = Math.max(1, gu.hp - recoil);
   }
 
   return {

@@ -24,14 +24,14 @@
 
 export const JAR = {
   /** 坛子初始蛊虫数量（推荐 8~20，改这里即可） */
-  initialCount: 14,
+  initialCount: 40,
 } as const;
 
 /** 世界/空间参数 */
 export const WORLD = {
-  WIDTH: 900,
-  HEIGHT: 650,
-  MARGIN: 20,
+  WIDTH: 1800,
+  HEIGHT: 1300,
+  MARGIN: 40,
 } as const;
 
 /**
@@ -68,11 +68,22 @@ export const FOOD = {
   SPAWN_INTERVAL: 9,
   SPAWN_COUNT_MIN: 1,
   SPAWN_COUNT_MAX: 2,
-  EAT_RADIUS: 14,
+  EAT_RADIUS: 14,  // 基础值，实际吃食使用 per-gu 的 getGuEatRadius（随等级增长）
   /** 吃一次的基础经验 */
   BASE_VALUE: 75,
   /** 吃一次回血量 */
   HEAL_ON_EAT: 38,
+} as const;
+
+/** 物理大小系统（随等级成长，影响视觉大小、战斗遭遇率、吃食效率） */
+export const SIZE = {
+  BASE_RADIUS: 8,
+  LEVEL_BONUS: 12,           // 每级增加的半径（视觉/碰撞）
+  LEVEL_CAP: 12,
+  BATTLE_SUM_FACTOR: 0.95,    // (ra + rb) * factor 作为战斗检测触发阈值
+  EAT_BASE: 14,
+  EAT_LEVEL_BONUS: 0.9,
+  EAT_LEVEL_CAP: 10,
 } as const;
 
 /** 升级与成长（非线性 + 高随机，数值适中） */

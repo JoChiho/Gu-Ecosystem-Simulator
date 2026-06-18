@@ -3,6 +3,7 @@ import type { Gu } from '../core/types';
 import { getPersonalityCN, getPersonalityDescription } from '../core/types';
 import { SKILL_DEFINITIONS } from '../core/skills';
 import { TRAIT_DEFINITIONS } from '../core/traits';
+import { ref, watch, nextTick } from 'vue';
 
 const props = defineProps<{
   guA: Gu;
@@ -32,6 +33,63 @@ function getTraitDesc(id: string): string {
 }
 
 const allSkills = SKILL_DEFINITIONS;
+
+const logContainer = ref<HTMLElement | null>(null);
+
+function getOwnedSkills(gu: Gu) {
+  let owned = gu.skills || [];
+  // 兼容旧数据：如果是字符串数组，转为 level 1
+  if (owned.length > 0 && typeof owned[0] === 'string') {
+    owned = (owned as any[]).map((id: string) => ({ id, level: 1 }));
+  }
+  return owned
+    .map((inst: any) => {
+      const def = allSkills.find((s: any) => s.id === inst.id);
+      if (!def) return null;
+      return { ...def, level: inst.level || 1 };
+    })
+    .filter(Boolean)
+    .slice(0, 4) as any[];
+}
+
+// 自动滚动到底部
+function scrollToBottom() {
+  nextTick(() => {
+    const el = logContainer.value as HTMLElement | null;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+}
+
+watch(() => props.combatLogs, () => {
+  scrollToBottom();
+}, { deep: true, immediate: true });
+
+// 安全渲染日志行（为两个蛊的名字上色 + 保持简单）
+function renderColoredLog(line: string): string {
+  try {
+    const aId = props.guA?.id;
+    const bId = props.guB?.id;
+    return line.replace(/蛊#(\d+)/g, (match, idStr) => {
+      const id = parseInt(idStr, 10);
+      if (id === aId) {
+        return `<span style="color:#4fc3f7; font-weight:600;">${match}</span>`;
+      }
+      if (id === bId) {
+        return `<span style="color:#ff8a65; font-weight:600;">${match}</span>`;
+      }
+      return match;
+    });
+  } catch (e) {
+    return line; // 安全回退，避免崩溃导致UI死机
+  }
+}
+
+// 颜色区分通过日志文本本身实现（见 combat.ts 改进的日志内容）
+// 如果需要富文本，可后续扩展为结构化日志数组
+
+
 </script>
 
 <template>
@@ -46,24 +104,25 @@ const allSkills = SKILL_DEFINITIONS;
               ({{ getPersonalityCN(guA.personality) }})
             </span>
           </div>
+          <div style="font-size: 10px; text-align: center; color: #ccc; margin-bottom: 2px;">HP: {{ Math.floor(guA.hp) }} / {{ guA.maxHp }}</div>
           <div class="hp-bar">
             <div class="hp-fill" :style="{ width: (guA.hp / guA.maxHp * 100) + '%' }"></div>
           </div>
           <div class="mp-bar">
             <div class="mp-fill" :style="{ width: (guA.mp / getMaxMp(guA) * 100) + '%' }"></div>
           </div>
-          <div class="stats">Lv.{{ guA.level }} | ATK {{ guA.atk }} DEF {{ guA.def }} SPD {{ guA.spd }} | MP {{ guA.mp }}/{{ getMaxMp(guA) }}</div>
+          <div class="stats">Lv.{{ guA.level }} | ATK {{ guA.atk }} DEF {{ guA.def }} SPD {{ guA.spd }} | MP {{ Math.floor(guA.mp) }}/{{ getMaxMp(guA) }}</div>
           <div class="traits">
             <span v-for="t in guA.traits" :key="t.id" class="trait tooltip" :data-tooltip="getTraitDesc(t.id)">
               {{ t.name }} Lv.{{ t.level || 1 }}
             </span>
           </div>
           <div class="skills">
-            <span v-for="s in allSkills" :key="s.id" 
+            <span v-for="s in getOwnedSkills(guA)" :key="s.id" 
                   class="skill tooltip" 
-                  :class="{ affordable: (guA.mp || 0) >= s.mpCost }"
+                  :class="{ affordable: (guA.mp || 0) >= (s.mpCost || 0) }"
                   :data-tooltip="s.description">
-              {{ s.name }}(MP{{ s.mpCost }})
+              {{ s.name }} Lv.{{ s.level }}(MP{{ s.mpCost }})
             </span>
           </div>
           <div class="skills-note">悬停技能/特质/性格查看详细描述</div>
@@ -78,33 +137,35 @@ const allSkills = SKILL_DEFINITIONS;
               ({{ getPersonalityCN(guB.personality) }})
             </span>
           </div>
+          <div style="font-size: 10px; text-align: center; color: #ccc; margin-bottom: 2px;">HP: {{ Math.floor(guB.hp) }} / {{ guB.maxHp }}</div>
           <div class="hp-bar">
             <div class="hp-fill" :style="{ width: (guB.hp / guB.maxHp * 100) + '%' }"></div>
           </div>
           <div class="mp-bar">
             <div class="mp-fill" :style="{ width: (guB.mp / getMaxMp(guB) * 100) + '%' }"></div>
           </div>
-          <div class="stats">Lv.{{ guB.level }} | ATK {{ guB.atk }} DEF {{ guB.def }} SPD {{ guB.spd }} | MP {{ guB.mp }}/{{ getMaxMp(guB) }}</div>
+          <div class="stats">Lv.{{ guB.level }} | ATK {{ guB.atk }} DEF {{ guB.def }} SPD {{ guB.spd }} | MP {{ Math.floor(guB.mp) }}/{{ getMaxMp(guB) }}</div>
           <div class="traits">
             <span v-for="t in guB.traits" :key="t.id" class="trait tooltip" :data-tooltip="getTraitDesc(t.id)">
               {{ t.name }} Lv.{{ t.level || 1 }}
             </span>
           </div>
           <div class="skills">
-            <span v-for="s in allSkills" :key="s.id" 
+            <span v-for="s in getOwnedSkills(guB)" :key="s.id" 
                   class="skill tooltip" 
-                  :class="{ affordable: (guB.mp || 0) >= s.mpCost }"
+                  :class="{ affordable: (guB.mp || 0) >= (s.mpCost || 0) }"
                   :data-tooltip="s.description">
-              {{ s.name }}(MP{{ s.mpCost }})
+              {{ s.name }} Lv.{{ s.level }}(MP{{ s.mpCost }})
             </span>
           </div>
           <div class="skills-note">悬停技能/特质/性格查看详细描述</div>
         </div>
       </div>
 
-      <!-- 战斗过程 -->
-      <div class="battle-log" v-if="combatLogs.length">
-        <div v-for="(line, idx) in combatLogs" :key="idx" class="log-line">{{ line }}</div>
+      <!-- 战斗过程 - 简化可靠渲染 + 颜色区分 -->
+      <div ref="logContainer" class="battle-log" v-if="combatLogs.length">
+        <div v-for="(line, idx) in combatLogs" :key="idx" class="log-line" :class="{ 'round-sep': line.includes('──────────') }" v-html="renderColoredLog(line)">
+        </div>
       </div>
       <div v-else class="battle-log muted">等待战斗开始...</div>
 
@@ -115,14 +176,14 @@ const allSkills = SKILL_DEFINITIONS;
         <div v-if="result.inherited.length">继承特质：{{ result.inherited.join('、') }}</div>
       </div>
 
-      <!-- 操作按钮 -->
+      <!-- 操作按钮 - 更可靠的显示逻辑 -->
       <div class="battle-actions">
-        <button v-if="!result && !isResolving" @click="emit('autoBattle')">自动进行对战</button>
-        <button v-if="!result && !isResolving" @click="emit('skip')">跳过对战，直接记录结果</button>
-        <button v-if="!result && !isResolving" @click="emit('nextRound')">下一步</button>
+        <button :disabled="!!result || isResolving" @click="emit('autoBattle')">自动进行对战</button>
+        <button :disabled="!!result || isResolving" @click="emit('skip')">跳过对战，直接记录结果</button>
+        <button :disabled="!!result || isResolving" @click="emit('nextRound')">下一步</button>
 
         <button v-if="result" @click="emit('confirm')" class="primary">确认结果，返回坛子</button>
-        <button v-if="!result && isResolving" disabled>战斗中...</button>
+        <button v-else-if="isResolving" disabled>战斗中...</button>
       </div>
     </div>
   </div>
@@ -200,7 +261,23 @@ const allSkills = SKILL_DEFINITIONS;
   margin: 12px 0;
   text-align: left;
 }
-.log-line { margin-bottom: 2px; }
+.log-line { 
+  margin-bottom: 3px; 
+  white-space: pre-wrap; 
+  font-size: 12px;
+  line-height: 1.4;
+}
+.log-line.round-sep {
+  color: #a0a0a0;
+  margin: 12px 0 8px;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 2px;
+  border-top: 2px solid #666;
+  padding-top: 6px;
+  text-align: center;
+  background: #1f1f1f;
+}
 .muted { color: #666; }
 
 .result-summary {

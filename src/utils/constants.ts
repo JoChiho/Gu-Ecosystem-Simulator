@@ -20,6 +20,7 @@ export {
   SPEED_LEVELS,
   GU_INIT,
   INITIAL_GU_COUNT,
+  SIZE,
 } from '../config/balance';
 
 // 为了向后兼容，也导出整个 BALANCE 对象供高级用法

@@ -127,10 +127,10 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
 
   // 3. 计算伤害（集中公式）
   const damage = calculateDamage(ctx);
-  defender.hp = Math.max(0, defender.hp - damage);
+  defender.hp = Math.max(0, Math.floor(defender.hp - damage));
 
   const dmgType = ctx.damageType === 'special' ? '特殊' : '物理';
-  roundLogs.push(`[回合${roundNumber}] 蛊#${attacker.id} → 蛊#${defender.id} ：${damage}点${dmgType}伤害`);
+  roundLogs.push(`[回合${roundNumber}] 蛊#${attacker.id} 对 蛊#${defender.id} 造成 ${damage} 点${dmgType}伤害`);
   roundLogs.push(...ctx.logs);
 
   // 吸血（lifesteal）支持：特质/技能可通过 lifesteal 或 derived 提供
@@ -153,8 +153,8 @@ function resolveRound(attacker: Gu, defender: Gu, roundLogs: string[], roundNumb
   const derivedDef = getDerivedStats(defender, hitCtx);
   if (defender.hp > 0 && Math.random() < derivedDef.counterRate) {
     const counterDamage = Math.max(COMBAT.MIN_DAMAGE, Math.floor(derivedDef.effectivePhysicalAtk * 0.55));
-    attacker.hp = Math.max(0, attacker.hp - counterDamage);
-    roundLogs.push(`[回合${roundNumber}] 蛊#${defender.id} 反击 → 蛊#${attacker.id} ：${counterDamage}点伤害`);
+    attacker.hp = Math.max(0, Math.floor(attacker.hp - counterDamage));
+    roundLogs.push(`[回合${roundNumber}] 蛊#${defender.id} 发动反击，对 蛊#${attacker.id} 造成 ${counterDamage} 点伤害`);
   }
 
   // 6. post_damage 触发
@@ -195,6 +195,7 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
   // 逃跑/中断机制已移除。战斗始终进行至一方死亡（使用较高 MAX_ROUNDS 兜底，实际因 MIN_DAMAGE 远小于 HP，通常 <15 交换即结束）
   while (a.hp > 0 && b.hp > 0 && round < COMBAT.MAX_ROUNDS) {
     round++;
+    logs.push(`────────── 第 ${round} 回合 ──────────`);
 
     // 每个“回合”（major exchange）保证双方都有行动机会
     // 先决定谁先手（速度优势），然后双方依次完整行动一次
@@ -233,11 +234,24 @@ export function resolveCombat(guA: Gu, guB: Gu): CombatResult {
       Math.random() * (COMBAT.INHERIT_TRAITS_MAX - COMBAT.INHERIT_TRAITS_MIN + 1)
     ) + COMBAT.INHERIT_TRAITS_MIN;
 
-    const loserPool = [...loser.traits];
+    let loserPool = [...loser.traits];
 
+    // 优先继承自己已有的特质（促进进化）
+    const winnerOwned = new Set(winner.traits.map(t => t.id));
+    const ownedMatches = loserPool.filter(t => winnerOwned.has(t.id));
+    if (ownedMatches.length > 0 && Math.random() < 0.65) {
+      loserPool = ownedMatches;
+    }
+
+    const MAX_TRAITS = 6;
     for (let i = 0; i < inheritCount && loserPool.length > 0; i++) {
       const idx = Math.floor(Math.random() * loserPool.length);
       const picked = loserPool.splice(idx, 1)[0];
+      const isNewForWinner = !winnerOwned.has(picked.id);
+      if (isNewForWinner && winner.traits.length >= MAX_TRAITS) {
+        // 上限 6 个特质，不再添加全新特质
+        continue;
+      }
       // 使用 acquireTrait 实现唯一 + 进化
       acquireTrait(winner, picked as any);
       inherited.push({ ...picked });

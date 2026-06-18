@@ -9,7 +9,7 @@ import BattleView from './components/BattleView.vue';
 import { resolveCombat, executeBattleRound } from './core/combat';   // 顶部导入，保证对战时可用
 import { acquireTrait, tryLevelUp } from './core/gu';
 import { getMetaStats, getDerivedStats } from './core/stats';
-import { COMBAT, FOOD, INITIAL_GU_COUNT } from './utils/constants';
+import { COMBAT, INITIAL_GU_COUNT, WORLD } from './utils/constants';
 
 const engine = new SimulationEngine(INITIAL_GU_COUNT);
 const snapshot = ref(engine.getSnapshot());
@@ -27,6 +27,10 @@ const battleLogs = ref<string[]>([]);
 const battleResult = ref<{ winnerId: number | null; inherited: string[] } | null>(null);
 const isResolvingBattle = ref(false);
 let currentBattleRound = 0;
+
+// 自动跳过战斗模式（大量蛊时使用，遇到即自动 resolve + finalize，不弹出 UI）
+const autoBattleMode = ref(false);
+const lastCombatBanner = ref<string | null>(null);
 
 // 晋升的蛊王列表（跨“坛子”）
 const yuanList = ref<any[]>([]);
@@ -53,8 +57,14 @@ function gameLoop() {
 
   // 检测是否有待处理的战斗
   if (engine.pendingBattle && !battleMode.value) {
-    enterBattleMode(engine.pendingBattle[0], engine.pendingBattle[1]);
-    isRunning.value = false; // 暂停模拟
+    if (autoBattleMode.value) {
+      // 自动模式：立即完整模拟 + finalize + 横幅提示，不暂停、不弹出详细UI
+      autoResolveBattle(engine.pendingBattle[0], engine.pendingBattle[1]);
+      // 继续运行，不设置 battleMode
+    } else {
+      enterBattleMode(engine.pendingBattle[0], engine.pendingBattle[1]);
+      isRunning.value = false; // 暂停模拟，等待手动处理
+    }
   }
 
   // 检查是否闭合
@@ -81,7 +91,10 @@ function performNextRound() {
 
   currentBattleRound++;
 
-  // 逃跑机制已完全取消。每个UI步（一个“回合”）保证双方都有完整行动。
+  // 插入明显的分隔线，让每个回合在日志中清晰区分
+  battleLogs.value.push(`────────── 第 ${currentBattleRound} 回合 ──────────`);
+
+  // 每个UI步（一个“回合”）保证双方都有完整行动。
   // 战斗现在始终进行至一方 HP <= 0 才结束（无中断、无平局逃跑）。
   const dA = getDerivedStats(battleGuA.value);
   const dB = getDerivedStats(battleGuB.value);
@@ -206,6 +219,34 @@ function skipBattle() {
   }
 }
 
+/** 自动战斗模式下直接完整解决 + 记录 + 清除，不进入战斗UI */
+function autoResolveBattle(a: Gu, b: Gu) {
+  const r = resolveCombat(a, b);
+  if (r.winner && r.loser) {
+    engine.finalizeCombat(
+      r.winner,
+      r.loser,
+      r.logs,
+      r.inheritedTraits.map(t => t.name)
+    );
+  } else {
+    engine.pendingBattle = null;
+  }
+
+  // 横幅提示结果
+  let banner = `蛊#${a.id} vs 蛊#${b.id}`;
+  if (r.winner) {
+    const inh = r.inheritedTraits.length > 0 ? ` 继承${r.inheritedTraits.map(t => t.name).join('、')}` : '';
+    banner = `蛊#${r.winner.id} 击败 蛊#${r.loser?.id}${inh}`;
+  }
+  lastCombatBanner.value = banner;
+  setTimeout(() => {
+    if (lastCombatBanner.value === banner) lastCombatBanner.value = null;
+  }, 2400);
+
+  updateSnapshot();
+}
+
 function confirmBattleResult() {
   if (!battleGuA.value || !battleGuB.value || !battleResult.value) return;
 
@@ -220,10 +261,10 @@ function confirmBattleResult() {
       battleResult.value.inherited
     );
 
-    // 战斗结束后，赢家获得额外血量恢复（通过“吃食物”机制的体现）
-    if (win) {
-      win.hp = Math.min(win.maxHp, win.hp + FOOD.HEAL_ON_EAT * 2);
-    }
+    // 注意：不再给胜者自动回血/满血。
+    // 战斗后蛊的血量保持战后状态，赢家也可能受伤。
+    // 这样“避战/谨慎”性格的蛊不会因为不参战而系统性吃亏；
+    // 战斗过的蛊虽然可能获得更多资源和成长，但要承担受伤/死亡风险。
   } else {
     // 无胜者（罕见平局情况）：双方留在坛子，不移除
   }
@@ -308,6 +349,9 @@ onUnmounted(() => {
         <span class="speed">{{ SPEED_LEVELS[speedIndex] }}x</span>
         <button @click="changeSpeed(1)">快</button>
         <button @click="resetSim">重置 / 新坛子</button>
+        <label class="auto-toggle">
+          <input type="checkbox" v-model="autoBattleMode" /> 自动跳过战斗
+        </label>
         <span class="tick">Tick: {{ tickDisplay }}</span>
         <span v-if="engine.isClosed" class="closed">【坛子已闭合】</span>
       </div>
@@ -315,8 +359,18 @@ onUnmounted(() => {
 
     <div class="main" v-if="!battleMode">
       <div class="canvas-wrap">
-        <SimulationCanvas :snapshot="snapshot" @select="onCanvasSelect" />
-        <div class="hint">蛊虫相遇时将自动进入对战界面（可跳过）</div>
+        <SimulationCanvas
+          :snapshot="snapshot"
+          :world-width="WORLD.WIDTH"
+          :world-height="WORLD.HEIGHT"
+          @select="onCanvasSelect"
+        />
+        <div class="hint">
+          {{ autoBattleMode ? '自动战斗模式：相遇自动解决，结果见横幅与右侧日志' : '蛊虫相遇时将自动进入对战界面（可跳过）' }}
+        </div>
+        <div v-if="lastCombatBanner" class="combat-banner">
+          ⚔️ {{ lastCombatBanner }}
+        </div>
       </div>
 
       <aside class="side">
@@ -333,8 +387,8 @@ onUnmounted(() => {
             <div class="tooltip" :data-tooltip="getPersonalityDescription(gu.personality)">
               Lv.{{ gu.level }} ({{ getPersonalityCN(gu.personality) }})
             </div>
-            <div>HP: {{ gu.hp }}/{{ gu.maxHp }}</div>
-            <div>MP: {{ gu.mp }}/{{ gu.maxMp || gu.mp || 0 }}</div>
+            <div>HP: {{ Math.floor(gu.hp) }}/{{ gu.maxHp }}</div>
+            <div>MP: {{ Math.floor(gu.mp) }}/{{ gu.maxMp || Math.floor(gu.mp) || 0 }}</div>
             <div>战斗 {{ gu.fights || 0 }} 胜 {{ gu.wins || 0 }}</div>
             <div class="traits">
               <span v-for="t in gu.traits" :key="t.id" class="trait-tag tooltip" :data-tooltip="getTraitDesc(t.id)">
@@ -380,7 +434,7 @@ onUnmounted(() => {
     />
 
     <footer v-if="!battleMode">
-      <small>食物获取已过滤 • 重要事件仅变异/大型事件/关键继承/闭合 • 相遇自动进入1v1对战UI</small>
+      <small>开启“自动跳过战斗”后大量蛊虫也能顺畅运行 • 世界尺寸增大时画布会自动缩放以显示完整空间 • 战斗结果记入右侧日志</small>
     </footer>
   </div>
 </template>
@@ -404,6 +458,29 @@ h1 { margin:0; font-size:22px; }
 .muted { color:#666; }
 .yuan-item { font-size:12px; border-bottom:1px solid #222; padding:3px 0; }
 .yuan-item .small { color:#888; font-size:10px; }
+
+.combat-banner {
+  margin-top: 6px;
+  padding: 4px 10px;
+  background: #2a2a1a;
+  border: 1px solid #665;
+  color: #ffcc66;
+  font-size: 12px;
+  font-family: monospace;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.auto-toggle {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #ccc;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.auto-toggle input { vertical-align: middle; }
 
 footer { margin-top:12px; text-align:center; color:#555; font-size:11px; }
 </style>

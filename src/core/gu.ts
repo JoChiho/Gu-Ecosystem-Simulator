@@ -2,8 +2,9 @@
  * 蛊实体逻辑（已更新初始化新追踪字段）
  */
 import type { Gu, Personality, Trait } from './types';
-import { WORLD, LEVEL, GU_CREATION } from '../utils/constants';
+import { WORLD, LEVEL, GU_CREATION, SIZE } from '../utils/constants';
 import { TRAIT_DEFINITIONS, pickRandomNewTrait, shouldGainExtraTraitOnLevelUp } from './traits';
+import { SKILL_DEFINITIONS } from './skills';
 
 function randInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -104,6 +105,13 @@ export function createRandomGu(id: number): Gu {
     personality: randomPersonality(),
     traits: initialTraits,
 
+    // 1级初始只有1个技能，后续通过升级获得，最多4个
+    skills: (() => {
+      if (SKILL_DEFINITIONS.length === 0) return [];
+      const idx = Math.floor(Math.random() * SKILL_DEFINITIONS.length);
+      return [{ id: SKILL_DEFINITIONS[idx].id, level: 1 }];
+    })(),
+
     specialAtk,
     specialDef,
     mp,
@@ -129,6 +137,16 @@ export function gainExp(gu: Gu, rawExp: number, metabolismMultiplier = 1): numbe
 export function tryLevelUp(gu: Gu): Trait[] {
   const needed = expToNextLevel(gu.level);
   if (gu.exp < needed) return [];
+
+  // 兼容：如果没有技能，初始化1个（模拟升级获得）
+  if (!gu.skills || gu.skills.length === 0) {
+    if (SKILL_DEFINITIONS.length > 0) {
+      const idx = Math.floor(Math.random() * SKILL_DEFINITIONS.length);
+      gu.skills = [{ id: SKILL_DEFINITIONS[idx].id, level: 1 }];
+    } else {
+      gu.skills = [];
+    }
+  }
 
   gu.exp -= needed;
   gu.level += 1;
@@ -171,6 +189,26 @@ export function tryLevelUp(gu: Gu): Trait[] {
       newTraits.push({ ...extraDef, level: acquired.level, acquisitions: acquired.acquisitions });
     }
   }
+
+  // 技能获取：和特质类似，通过升级获得
+  // 1级初始1个，升级时可能获得新技能（上限4）或提升已有技能等级
+  const MAX_SKILLS = 4;
+  const currentSkillIds = (gu.skills || []).map(s => s.id);
+  if (currentSkillIds.length < MAX_SKILLS && Math.random() < 0.4) {
+    const available = SKILL_DEFINITIONS.filter(s => !currentSkillIds.includes(s.id));
+    if (available.length > 0) {
+      const newS = available[Math.floor(Math.random() * available.length)];
+      (gu.skills as any[]).push({ id: newS.id, level: 1 });
+    }
+  } else if ((gu.skills || []).length > 0 && Math.random() < 0.55) {
+    // 提升已有技能等级
+    const idx = Math.floor(Math.random() * (gu.skills as any[]).length);
+    (gu.skills as any[])[idx].level = ((gu.skills as any[])[idx].level || 1) + 1;
+  }
+
+  // 强制上限4
+  (gu.skills as any[]) = (gu.skills as any[]).slice(0, 4);
+
   gu.hp = gu.maxHp;  // 升级回满
   return newTraits;
 }
@@ -223,3 +261,22 @@ export function computeNextPosition(gu: Gu, nearestFood: any, nearestOther: any,
 }
 
 // 逃跑机制已完全移除（用户要求取消频繁中断）。战斗现在始终进行至一方死亡。
+
+/**
+ * 获取蛊的物理半径（随等级增长）
+ * - 用于 Canvas 绘制
+ * - 用于战斗碰撞检测（遭遇概率）
+ * - 等级越高，体型越大 → 吃食物范围越大、效率越高、战斗概率越高
+ */
+export function getGuRadius(gu: Gu): number {
+  const lvl = Math.min(Math.max(1, gu.level), SIZE.LEVEL_CAP);
+  return SIZE.BASE_RADIUS + (lvl - 1) * SIZE.LEVEL_BONUS;
+}
+
+/**
+ * 获取该蛊的吃食半径（等级越高吃得越容易、效率越高）
+ */
+export function getGuEatRadius(gu: Gu): number {
+  const lvl = Math.min(Math.max(1, gu.level), SIZE.EAT_LEVEL_CAP);
+  return SIZE.EAT_BASE + (lvl - 1) * SIZE.EAT_LEVEL_BONUS;
+}
